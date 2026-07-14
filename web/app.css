@@ -1,0 +1,465 @@
+/* =========================================================================
+   TEMA  -  degistirilebilir. GMK Violet Alert esintili: kirik-beyaz/bej +
+   derin regal mor + grimsi aksan.
+   ========================================================================= */
+:root {
+  --bg-top:#ECE8E1; --bg-bottom:#DDD8D0;
+  --ink:#342b3b; --ink-soft:#726a7a; --narration:#948c9c;
+  --accent:#6d4d7a; --accent-deep:#4a3357; --grey:#8b8592;
+  --dot:104,74,122;
+  --neon:124,86,150; /* NFS-underglow violet - the signature edge strip everywhere */
+  --panel-bg:rgba(240,238,243,0.12); --panel-border:rgba(90,74,104,0.14);
+  /* Design unity: every panel speaks the lock-card language - sharp corners,
+     frosted glass, neon edge. 9px blur (not the card's 20) on this huge surface
+     keeps WebView2 smooth while reading as the same family. */
+  --panel-blur:9px; --panel-radius:3px; --panel-maxw:1000px; --panel-h:88vh;
+  --user-bg:rgba(109,77,122,0.13); --user-border:rgba(109,77,122,0.26);
+  --font-ui:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --font-narr:"Iowan Old Style","Palatino Linotype","Book Antiqua",Georgia,serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:var(--font-ui);color:var(--ink);
+  background:linear-gradient(155deg,var(--bg-top),var(--bg-bottom));overflow:hidden;-webkit-font-smoothing:antialiased}
+#bg{position:fixed;inset:0;z-index:0;display:block}
+
+.chat{position:relative;z-index:1;width:min(94vw,var(--panel-maxw));height:var(--panel-h);
+  margin:4vh auto 0;display:flex;flex-direction:column;background:var(--panel-bg);
+  border:1px solid var(--panel-border);border-radius:var(--panel-radius);
+  /* neon edge lives in box-shadow: overflow:hidden would CLIP a ::before strip */
+  box-shadow:0 40px 90px -34px rgba(60,44,78,0.30),inset 0 1px 0 rgba(255,255,255,0.40),
+    0 0 0 1px rgba(var(--neon),0.34), 0 0 15px 1px rgba(var(--neon),0.26), 0 0 5px 0 rgba(var(--neon),0.32);
+  backdrop-filter:blur(var(--panel-blur)) saturate(120%);-webkit-backdrop-filter:blur(var(--panel-blur)) saturate(120%);
+  overflow:hidden}
+
+.hdr{position:relative;display:flex;align-items:center;gap:12px;padding:15px 22px;
+  border-bottom:1px solid rgba(90,74,104,0.10);
+  background:linear-gradient(to bottom,rgba(255,255,255,0.28),rgba(255,255,255,0))}
+.hdr .name{font-weight:650;font-size:16px;letter-spacing:.2px}
+/* marka lockup'i: kullanicinin birlesik tasarimi (tac-W + kristal 'isteria',
+   sarmasiklar iclerinden geciyor) - LOCAL AI CHAT bandi cikartilmis die-cut.
+   Underglow: alfa SILUETINI izleyen uc katman - keskin kontur izi + govde
+   isimasi + genis sacilim (panellerin neon dili) */
+.hdr .brandmark{width:141px;height:42px;flex:none;
+  background:transparent url("brandlock.png") left center/contain no-repeat;
+  filter:drop-shadow(0 0 1.5px rgba(var(--neon),0.50)) drop-shadow(0 0 6px rgba(var(--neon),0.42))
+    drop-shadow(0 0 14px rgba(var(--neon),0.20))}
+.hdr .status{margin-left:auto;font-size:12.5px;color:var(--ink-soft);display:flex;align-items:center;gap:7px}
+.live{width:7px;height:7px;border-radius:50%;background:var(--grey);box-shadow:0 0 0 3px rgba(139,133,146,0.24)}
+.live.ok{background:#7fa06a;box-shadow:0 0 0 3px rgba(127,160,106,0.22)}
+.icon-btn{width:36px;height:36px;border:none;background:transparent;cursor:pointer;border-radius:7px;
+  color:var(--ink-soft);display:grid;place-items:center;transition:background .15s,color .15s,opacity .15s}
+.icon-btn:hover{background:rgba(90,74,104,0.10);color:var(--ink)}
+
+/* auto-speak icon states (custom SVG waveform in #ttsBtn) */
+#ttsBtn.on{color:var(--accent);opacity:1;filter:drop-shadow(0 0 4px rgba(var(--neon),0.45))}
+#ttsBtn.off{opacity:.55}
+#ttsBtn.unavail{color:var(--grey);opacity:.45}
+#ttsBtn.loading{animation:ttsPulse 1.2s ease-in-out infinite}
+@keyframes ttsPulse{0%,100%{opacity:.3}50%{opacity:.85}}
+
+/* three-dot dropdown - small frosted sharp panel with the neon border */
+.menu{position:absolute;top:calc(100% - 6px);right:16px;min-width:196px;z-index:9;display:none;
+  /* govdenin sicak kemik tonu (soguk lavanta DEGIL - dusuk alfada panel boyle
+     gorunur); saturate yok - arkadaki rengi yogunlastirip tonu kaydiriyordu.
+     Guclu blur, metin ustunde okunurlugu tasir */
+  background:rgba(236,232,225,0.80);backdrop-filter:blur(18px);
+  -webkit-backdrop-filter:blur(18px);
+  border:1px solid rgba(var(--neon),0.30);border-radius:5px;padding:6px;
+  box-shadow:0 18px 40px -18px rgba(60,44,78,0.35), 0 0 12px rgba(var(--neon),0.16)}
+.menu.show{display:block;animation:menuIn .16s ease}
+@keyframes menuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.menu .mi{display:flex;align-items:center;gap:10px;width:100%;border:none;background:transparent;
+  padding:9px 11px;border-radius:4px;font-size:13px;color:var(--ink);cursor:pointer;
+  font-family:var(--font-ui);text-align:left;transition:background .13s}
+.menu .mi:hover{background:rgba(90,74,104,0.10)}
+.menu .mi svg{width:15px;height:15px;color:var(--ink-soft);flex:none}
+/* yeni sohbet onayi - menu materyalinin kucuk esi; sohbet kaybi = tehlike dili */
+.confirm-pop{position:absolute;top:calc(100% - 6px);right:58px;z-index:9;display:none;min-width:210px;
+  background:rgba(236,232,225,0.58);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border:1px solid rgba(var(--neon),0.30);border-radius:5px;padding:11px 12px;
+  box-shadow:0 18px 40px -18px rgba(60,44,78,0.35), 0 0 12px rgba(var(--neon),0.16)}
+.confirm-pop.show{display:block;animation:menuIn .16s ease}
+.confirm-pop .t{font-size:12.5px;color:var(--ink);margin-bottom:9px;line-height:1.45}
+.confirm-pop .row{display:flex;gap:8px}
+.confirm-pop button{flex:1;border:none;border-radius:3px;padding:6px 10px;font-size:12px;font-weight:600;
+  cursor:pointer;transition:.15s;font-family:var(--font-ui)}
+.confirm-pop .yes{background:var(--accent-deep);color:#fff} /* onay ailesinin moru (Kaydet/Gonder dili) */
+.confirm-pop .yes:hover{background:var(--accent)}
+.confirm-pop .no{background:rgba(90,74,104,0.12);color:var(--ink)}
+.confirm-pop .no:hover{background:rgba(90,74,104,0.2)}
+
+.messages{flex:1;overflow-y:auto;padding:26px 26px 10px;display:flex;flex-direction:column;gap:20px;
+  scrollbar-width:thin;scrollbar-color:rgba(90,74,104,0.28) transparent;text-shadow:0 1px 2px rgba(255,255,255,0.35)}
+.messages::-webkit-scrollbar{width:8px}
+.messages::-webkit-scrollbar-thumb{background:rgba(90,74,104,0.22);border-radius:8px}
+
+/* punto/satir araligi Yazi ayarlari panelinden --msg-fs/--msg-lh ile yonetilir
+   (yalnizca mesaj govdesi olceklenir; yazar etiketi, kompozer, paneller sabit) */
+.msg{max-width:76%;line-height:var(--msg-lh,1.62);font-size:var(--msg-fs,15.5px);white-space:pre-wrap;word-wrap:break-word}
+.msg.user{align-self:flex-end;background:var(--user-bg);border:1px solid var(--user-border);
+  padding:12px 16px;border-radius:9px 9px 3px 9px;box-shadow:0 2px 8px rgba(74,51,87,0.08)}
+.msg.ai{align-self:flex-start;max-width:82%}
+.name-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.msg.ai .name{color:var(--accent);font-weight:650;font-size:12.5px;letter-spacing:.2px;display:block}
+/* per-message speak button (appears on hover in the name row) */
+.spk{width:22px;height:22px;border:none;border-radius:4px;background:transparent;cursor:pointer;
+  color:var(--ink-soft);display:grid;place-items:center;opacity:0;transition:opacity .15s,color .15s;padding:0}
+.msg.ai:hover .spk{opacity:.55}
+.spk:hover{opacity:1 !important;color:var(--accent)}
+.spk.playing{opacity:1 !important;color:var(--accent);filter:drop-shadow(0 0 3px rgba(var(--neon),0.5))}
+.spk svg{width:14px;height:14px;display:block}
+.narration{color:var(--narration);font-family:var(--font-narr);font-style:italic;font-size:.97em} /* mesaj puntosuyla orantili (15/15.5) */
+.source{margin-top:9px;font-size:12px;color:var(--accent);display:inline-flex;align-items:center;gap:6px;
+  background:rgba(109,77,122,0.14);padding:3px 9px;border-radius:8px;text-shadow:none;margin-right:6px}
+.note{align-self:flex-start;font-size:12.5px;color:var(--ink-soft);font-style:italic;opacity:.85}
+.msg-img{margin-top:8px;max-width:220px;border-radius:6px;cursor:pointer;display:block;
+  box-shadow:0 4px 14px rgba(60,44,78,0.20);transition:transform .12s}
+.msg-img:hover{transform:scale(1.02)}
+
+/* asagi in oku: kompozerin hafif ustunde, yatay ortali; menu materyali zemin
+   (mesaj ustune gelebilir - okunur kalsin), .icon-btn/.spk hover dili, yeni
+   icerik akarken neon nabiz */
+.jump-down{position:absolute;left:50%;bottom:86px;z-index:4;width:34px;height:34px;
+  transform:translateX(-50%) translateY(6px);border:1px solid rgba(var(--neon),0.30);border-radius:5px;
+  background:rgba(236,232,225,0.58);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  color:var(--ink-soft);display:grid;place-items:center;cursor:pointer;opacity:0;pointer-events:none;
+  transition:opacity .18s,transform .18s,color .15s,box-shadow .18s;
+  box-shadow:0 6px 18px -8px rgba(60,44,78,0.35), 0 0 8px rgba(var(--neon),0.14)}
+.jump-down.show{opacity:1;pointer-events:auto;transform:translateX(-50%) translateY(0)}
+.jump-down:hover{color:var(--accent);box-shadow:0 6px 18px -8px rgba(60,44,78,0.40), 0 0 12px rgba(var(--neon),0.30)}
+.jump-down.pulse{animation:jdPulse 1.6s ease-in-out infinite}
+@keyframes jdPulse{0%,100%{box-shadow:0 6px 18px -8px rgba(60,44,78,0.35), 0 0 6px rgba(var(--neon),0.18)}
+  50%{box-shadow:0 6px 18px -8px rgba(60,44,78,0.35), 0 0 16px 2px rgba(var(--neon),0.42)}}
+.jump-down svg{width:16px;height:16px}
+
+/* koyu arka plan gorselinde otomatik ACIK METIN modu (yalniz mesaj alani kapsami;
+   renkler temanin leylak ailesinden acildi, golge yonu cevrildi) */
+.messages.bg-light-text{text-shadow:0 1px 2px rgba(20,14,26,0.55)}
+.messages.bg-light-text .msg{color:#efeae2}
+.messages.bg-light-text .narration{color:#cbc0d8}
+.messages.bg-light-text .msg.ai .name{color:#cda6e6}
+.messages.bg-light-text .note{color:#cfc7da}
+.messages.bg-light-text .msg.user{background:rgba(28,22,36,0.44);border-color:rgba(255,255,255,0.14)}
+.messages.bg-light-text .spk{color:#cfc7da}
+.messages.bg-light-text .source{text-shadow:none}
+
+.typing{align-self:flex-start;display:flex;gap:5px;padding:6px 2px}
+.typing span{width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.5;animation:bob 1.1s infinite ease-in-out}
+.typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+@keyframes bob{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-5px);opacity:.9}}
+
+.stage{display:none;gap:10px;padding:10px 16px 0}
+.stage.show{display:flex}
+.chip{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.5);
+  border:1px solid rgba(90,74,104,0.18);border-radius:5px;padding:6px 8px 6px 6px}
+.chip img{width:38px;height:38px;object-fit:cover;border-radius:4px;cursor:pointer}
+.chip .fn{font-size:12.5px;color:var(--ink-soft);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip .rm{width:20px;height:20px;border:none;border-radius:4px;background:rgba(90,74,104,0.12);color:var(--ink);cursor:pointer;line-height:1}
+.chip .rm:hover{background:rgba(109,77,122,0.25)}
+
+.composer{display:flex;gap:11px;align-items:center;padding:14px 16px;
+  border-top:1px solid rgba(90,74,104,0.10);background:rgba(255,255,255,0.22)}
+.composer.disabled{opacity:.5;pointer-events:none}
+.attach{width:44px;height:44px;border:1px solid rgba(90,74,104,0.16);background:rgba(255,255,255,0.4);
+  border-radius:3px;cursor:pointer;color:var(--ink-soft);display:grid;place-items:center;transition:.15s}
+.attach:hover{color:var(--accent);border-color:var(--accent);background:rgba(109,77,122,0.08)}
+.composer input[type=text]{flex:1;background:rgba(255,255,255,0.5);border:1px solid rgba(90,74,104,0.16);
+  border-radius:3px;padding:13px 18px;color:var(--ink);font-size:15.5px;font-family:var(--font-ui);outline:none;transition:.15s}
+.composer input[type=text]::placeholder{color:rgba(80,72,88,0.5)}
+.composer input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(109,77,122,0.15)}
+/* flat, lock-button language (the convex radial gradient is gone) */
+.send{width:46px;height:46px;border-radius:3px;border:none;cursor:pointer;
+  background:var(--accent-deep);color:#fff;display:grid;place-items:center;
+  box-shadow:0 6px 16px rgba(74,51,87,0.22);transition:transform .12s,background .15s,box-shadow .15s,opacity .15s}
+.send:hover{background:var(--accent);transform:translateY(-1px)}
+.send:active{transform:translateY(0)}
+.send:disabled{opacity:.4;cursor:default;box-shadow:none;transform:none}
+.send svg{width:20px;height:20px}
+
+.drop{position:absolute;inset:0;z-index:5;display:none;place-items:center;background:rgba(236,232,225,0.66);backdrop-filter:blur(2px)}
+.drop.show{display:grid}
+.drop .box{border:2px dashed var(--accent);border-radius:5px;padding:34px 54px;color:var(--accent);font-size:16px;background:rgba(255,255,255,0.5)}
+
+.lb{position:fixed;inset:0;z-index:20;display:none;place-items:center;background:rgba(34,24,42,0.74)}
+.lb.show{display:grid}
+.lb img{max-width:88vw;max-height:86vh;border-radius:5px;box-shadow:0 30px 80px rgba(0,0,0,0.5)}
+.lb .close{position:absolute;top:22px;right:26px;width:42px;height:42px;border-radius:6px;border:none;
+  background:rgba(255,255,255,0.16);color:#fff;font-size:22px;cursor:pointer}
+.lb .close:hover{background:rgba(255,255,255,0.28)}
+
+/* Loading / error overlay over the messages area */
+.overlay{position:absolute;inset:0;z-index:6;display:none;flex-direction:column;gap:16px;
+  align-items:center;justify-content:center;background:rgba(236,232,225,0.55);backdrop-filter:blur(3px);text-align:center;padding:24px}
+.overlay.show{display:flex}
+.overlay .spinner{width:40px;height:40px;border-radius:50%;border:3px solid rgba(109,77,122,0.25);
+  border-top-color:var(--accent);animation:spin 0.9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.overlay .t{font-size:15px;color:var(--ink)}
+.overlay .d{font-size:12.5px;color:var(--ink-soft);max-width:420px}
+
+/* =========================================================================
+   KILIT EKRANI (parola)  -  temaya birebir: cam kart, arka plan blur,
+   parola sonrasi kart hos bir animasyonla gider + ana panel belirir.
+   ========================================================================= */
+#lock{position:fixed;inset:0;z-index:30;display:none;place-items:center;padding:24px;
+  background:rgba(236,232,225,0.30);
+  backdrop-filter:blur(4px) saturate(112%);-webkit-backdrop-filter:blur(4px) saturate(112%);
+  transition:opacity .55s ease, backdrop-filter .55s ease}
+#lock.show{display:grid;animation:lockIn .5s ease}
+#lock.hide{opacity:0;pointer-events:none;backdrop-filter:blur(0);-webkit-backdrop-filter:blur(0)}
+@keyframes lockIn{from{opacity:0}to{opacity:1}}
+
+.lock-card{position:relative;width:min(90vw,348px);background:rgba(243,241,246,0.12);
+  border:none;border-radius:2px;padding:30px 28px 22px;
+  box-shadow:0 40px 82px -44px rgba(60,44,78,0.30),inset 0 1px 0 rgba(255,255,255,0.26);
+  backdrop-filter:blur(20px) saturate(108%);-webkit-backdrop-filter:blur(20px) saturate(108%);
+  text-align:center;transition:transform .5s cubic-bezier(.2,.7,.2,1),opacity .5s ease}
+/* NFS alti-neon gibi: dairesel yayilmaz -> hatlarin cevresinde neon-mor serit + hafif tasma */
+.lock-card::before{content:"";position:absolute;inset:-1px;border-radius:3px;pointer-events:none;
+  border:1px solid rgba(var(--neon),0.50);
+  box-shadow:0 0 15px 1px rgba(var(--neon),0.36), 0 0 5px 0 rgba(var(--neon),0.42)}
+#lock.hide .lock-card{transform:translateY(-12px) scale(.93);opacity:0}
+.lock-card.shake{animation:lshake .5s}
+@keyframes lshake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}
+  30%,50%,70%{transform:translateX(-8px)}40%,60%{transform:translateX(8px)}}
+
+.lock-badge{width:40px;height:40px;border-radius:5px;margin:0 auto 14px;display:grid;place-items:center;
+  color:var(--accent);background:rgba(109,77,122,0.10);border:1px solid rgba(109,77,122,0.22)}
+.lock-badge svg{width:19px;height:19px}
+.lock-title{font-size:17px;font-weight:640;letter-spacing:.2px;color:var(--ink)}
+.lock-sub{font-size:12.5px;color:var(--ink-soft);margin-top:6px;line-height:1.5}
+.lock-form{margin-top:18px;display:flex;flex-direction:column;gap:9px}
+.lock-form input[type=password]{background:rgba(255,255,255,0.58);border:1px solid rgba(90,74,104,0.20);
+  border-radius:3px;padding:11px 15px;font-size:14.5px;color:var(--ink);font-family:var(--font-ui);
+  outline:none;text-align:center;letter-spacing:2px;transition:.15s}
+.lock-form input[type=password]::placeholder{letter-spacing:normal;color:rgba(80,72,88,0.46)}
+.lock-form input[type=password]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(109,77,122,0.15)}
+.lock-btn{margin-top:6px;border:none;border-radius:3px;padding:12px;cursor:pointer;font-size:14.5px;font-weight:600;
+  background:var(--accent-deep);color:#fff;letter-spacing:.3px;
+  box-shadow:0 6px 16px rgba(74,51,87,0.22);transition:transform .12s,background .15s}
+.lock-btn:hover{background:var(--accent);transform:translateY(-1px)}
+.lock-btn:active{transform:translateY(0)}
+.lock-btn:disabled{opacity:.5;cursor:default;transform:none;filter:none}
+.lock-err{min-height:15px;font-size:12.5px;color:var(--accent-deep);opacity:0;transition:opacity .2s;margin-top:-2px}
+.lock-err.show{opacity:1}
+.lock-remember{display:flex;align-items:center;justify-content:center;gap:9px;margin-top:16px;
+  font-size:12.5px;color:var(--ink-soft);user-select:none}
+.switch{position:relative;display:inline-block;width:34px;height:19px;flex:none;cursor:pointer}
+.switch input{position:absolute;opacity:0;width:0;height:0;margin:0}
+.switch .track{position:absolute;inset:0;background:rgba(90,74,104,0.24);border-radius:20px;transition:background .2s}
+.switch .track::before{content:"";position:absolute;width:15px;height:15px;left:2px;top:2px;background:#fff;
+  border-radius:50%;box-shadow:0 1px 3px rgba(60,44,78,0.30);transition:transform .2s}
+.switch input:checked + .track{background:var(--accent)}
+.switch input:checked + .track::before{transform:translateX(15px)}
+.lock-remember label{cursor:pointer}
+.lock-remember .info{cursor:pointer;color:var(--accent);text-decoration:underline dotted;text-underline-offset:2px}
+/* tasarim dili: keskin 3px, ince neon cerceve + her kenarda hafif isilti, DUZ butonlar
+   (eski hali: 14px yumusak kose, gradyanli dis-bukey ok butonu, neon yok) */
+.lock-confirm{max-height:0;overflow:hidden;opacity:0;transition:max-height .35s ease,opacity .3s ease,margin .3s ease;
+  text-align:left;background:rgba(109,77,122,0.09);border:1px solid rgba(var(--neon),0.30);border-radius:3px;margin-top:0;
+  box-shadow:0 0 10px rgba(var(--neon),0.14), 0 0 3px rgba(var(--neon),0.20)}
+.lock-confirm.show{max-height:260px;opacity:1;margin-top:12px;padding:13px 14px}
+.lock-confirm .h{font-size:12.5px;font-weight:650;color:var(--accent);margin-bottom:5px}
+.lock-confirm .b{font-size:11.5px;color:var(--ink-soft);line-height:1.55}
+.lock-confirm .row{display:flex;gap:8px;margin-top:11px}
+.lock-confirm button{flex:1;border:none;border-radius:3px;padding:8px;font-size:12.5px;cursor:pointer;font-weight:600;transition:.15s;font-family:var(--font-ui)}
+.lock-confirm .ok{background:var(--accent-deep);color:#fff}
+.lock-confirm .ok:hover{background:var(--accent)}
+.lock-confirm .no{background:rgba(90,74,104,0.12);color:var(--ink)}
+.lock-confirm .no:hover{background:rgba(90,74,104,0.2)}
+.lock-note{margin-top:13px;font-size:11.5px;color:var(--narration);font-style:italic;line-height:1.5}
+
+@keyframes revealIn{from{opacity:0;transform:scale(.965) translateY(10px)}to{opacity:1;transform:none}}
+.chat.reveal{animation:revealIn .6s cubic-bezier(.2,.7,.2,1) both}
+
+/* =========================================================================
+   MODAL SISTEMI (üç-nokta menüsü) - kilit kartının dili: keskin köşeler,
+   yoğun frost, NFS-neon kenar şeridi. z: #lock(30) > .modal(25) > .lb(20).
+   ========================================================================= */
+.modal{position:fixed;inset:0;z-index:25;display:none;place-items:center;padding:24px;
+  background:rgba(236,232,225,0.30);
+  backdrop-filter:blur(4px) saturate(112%);-webkit-backdrop-filter:blur(4px) saturate(112%)}
+.modal.show{display:grid;animation:lockIn .35s ease}
+.modal-card{position:relative;width:min(92vw,560px);max-height:82vh;display:flex;flex-direction:column;
+  /* govdenin sicak kemik tonu (yuksek alfada soguk lavanta tinti sirıtir - menu dersi) */
+  background:rgba(236,232,225,0.48);border:none;border-radius:3px;padding:18px 20px 16px;
+  box-shadow:0 40px 82px -44px rgba(60,44,78,0.30),inset 0 1px 0 rgba(255,255,255,0.26);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  animation:revealIn .45s cubic-bezier(.2,.7,.2,1) both}
+/* neon strip - modal-card has NO overflow:hidden (scroll lives in .modal-body) */
+.modal-card::before{content:"";position:absolute;inset:-1px;border-radius:4px;pointer-events:none;
+  border:1px solid rgba(var(--neon),0.50);
+  box-shadow:0 0 15px 1px rgba(var(--neon),0.36), 0 0 5px 0 rgba(var(--neon),0.42)}
+.modal-head{display:flex;align-items:center;margin-bottom:12px;flex:none}
+.modal-title{font-size:15.5px;font-weight:650;letter-spacing:.2px;color:var(--ink)}
+.modal-close{margin-left:auto;width:32px;height:32px;border-radius:4px;border:none;cursor:pointer;
+  background:rgba(90,74,104,0.10);color:var(--ink);font-size:18px;line-height:1;transition:background .15s}
+.modal-close:hover{background:rgba(90,74,104,0.20)}
+.modal-body{overflow-y:auto;min-height:0;padding:2px;
+  scrollbar-width:thin;scrollbar-color:rgba(90,74,104,0.28) transparent}
+.modal-body::-webkit-scrollbar{width:8px}
+.modal-body::-webkit-scrollbar-thumb{background:rgba(90,74,104,0.22);border-radius:8px}
+.mpane{display:none}
+.mpane.show{display:block}
+
+/* ---- Hafıza paneli ---- */
+.mem-load{font-size:13px;color:var(--ink-soft);padding:8px 0}
+.mem-recap{font-family:var(--font-narr);font-style:italic;color:#534a5b; /* ink-soft ile ink arasi: +%50 kontrast */
+  font-size:14px;line-height:1.6;margin-bottom:14px}
+.mem-sec{font-size:12px;font-weight:650;letter-spacing:.4px;color:var(--accent);margin:10px 0 8px}
+/* baslik satiri: solda "Bilinenler", sagda + Bilgi ekle (chip'lerin .pname.new dili) */
+.mem-sec-row{display:flex;align-items:center;justify-content:space-between}
+.mem-sec-row .pname.new{font-size:12px;padding:4px 10px}
+/* bilgi arama - kompozer inputunun cerceve/odak recetesi, panel olceginde */
+.mem-search{width:100%;margin:10px 0 12px;border:1px solid rgba(90,74,104,0.20);background:rgba(255,255,255,0.5);
+  border-radius:3px;padding:9px 12px;font-size:13px;color:var(--ink);font-family:var(--font-ui);outline:none;transition:.15s}
+.mem-search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(109,77,122,0.15)}
+/* elle bilgi ekleme formu - .fact kartinin icinde, mevcut input/slider/onay dilleri */
+.fadd{display:none;margin-bottom:7px}
+.fadd.show{display:block}
+.fadd .frow{display:flex;gap:8px;align-items:center}
+.fadd .pnew-input{flex:1;width:auto}
+.fadd-type{border:1px solid rgba(90,74,104,0.22);background:rgba(255,255,255,0.58);border-radius:4px;
+  padding:5px 8px;font-size:12px;color:var(--ink);font-family:var(--font-ui);outline:none;cursor:pointer}
+.fadd-type:focus{border-color:var(--accent)}
+.fadd-row2{display:flex;gap:8px;align-items:center;margin-top:8px}
+.fadd-row2 .vrange{flex:1}
+.fadd-ok{border:none;border-radius:3px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  background:var(--accent-deep);color:#fff;transition:.15s;font-family:var(--font-ui)}
+.fadd-ok:hover{background:var(--accent)}
+.fadd-no{border:none;border-radius:3px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;
+  background:rgba(90,74,104,0.12);color:var(--ink);transition:.15s;font-family:var(--font-ui)}
+.fadd-no:hover{background:rgba(90,74,104,0.2)}
+/* bilgi duzenleme: metnin KENDI kutusu duzenlenir - outline duzen kaydirmaz,
+   input ailesinin odak dili (accent cerceve + yumusak halka) */
+.fact .tx[contenteditable]{outline:1px solid var(--accent);outline-offset:3px;border-radius:2px;
+  background:rgba(255,255,255,0.45);box-shadow:0 0 0 4px rgba(109,77,122,0.10);cursor:text;
+  white-space:pre-wrap}
+/* bilgi duzenleme: .del'in yanindaki kalem (.pact.ren'in fact boyutu) + satir alti form */
+.fact .edt{flex:none;width:20px;height:20px;border:none;border-radius:3px;cursor:pointer;
+  background:rgba(90,74,104,0.10);color:var(--ink-soft);display:grid;place-items:center;transition:.15s;padding:0}
+.fact .edt:hover{background:rgba(109,77,122,0.25);color:var(--accent)}
+.fact .edt svg{width:11px;height:11px}
+.fact-edit{display:none;flex-direction:column;gap:8px;margin-top:8px}
+.fact.editing>.fact-edit{display:flex}
+.mem-facts{list-style:none;display:flex;flex-direction:column;gap:7px}
+.fact{background:rgba(255,255,255,0.34);border:1px solid rgba(90,74,104,0.14);
+  border-radius:4px;padding:8px 10px;font-size:13px}
+.fact .frow{display:flex;align-items:flex-start;gap:8px}
+.fact .chip-t{flex:none;font-size:10.5px;padding:2px 7px;border-radius:3px;
+  background:rgba(109,77,122,0.14);color:var(--accent);font-weight:600;margin-top:1px}
+.fact .tx{flex:1;line-height:1.45}
+.fact .dots{flex:none;display:flex;gap:2px;margin-top:5px}
+.fact .dots i{width:5px;height:5px;border-radius:50%;background:rgba(109,77,122,0.18)}
+.fact .dots i.on{background:var(--accent)}
+.fact .del{flex:none;width:20px;height:20px;border:none;border-radius:3px;cursor:pointer;
+  background:rgba(90,74,104,0.10);color:var(--ink-soft);line-height:1;font-size:13px;transition:.15s}
+.fact .del:hover{background:rgba(109,77,122,0.25);color:var(--accent)}
+.fact .fact-confirm{display:none;gap:8px;margin-top:8px;align-items:center;font-size:12px;color:var(--accent-deep)}
+.fact.confirm .fact-confirm{display:flex}
+.fact-confirm button{border:none;border-radius:3px;padding:5px 11px;font-size:12px;cursor:pointer;font-weight:600;transition:.15s}
+.fact-confirm .yes{background:var(--accent-deep);color:#fff}
+.fact-confirm .yes:hover{background:var(--accent)}
+.fact-confirm .no{background:rgba(90,74,104,0.12);color:var(--ink)}
+.fact-confirm .no:hover{background:rgba(90,74,104,0.2)}
+.mem-epis{margin-top:14px}
+.mem-epis summary{cursor:pointer;font-size:12.5px;color:var(--ink-soft);user-select:none}
+.mem-epis ul{list-style:none;margin-top:6px}
+.mem-epis li{font-size:12.5px;color:var(--ink-soft);padding:7px 2px;line-height:1.5;
+  border-bottom:1px dashed rgba(90,74,104,0.12)}
+.mem-epis .ets{color:var(--narration);font-size:11px;display:block;margin-top:2px}
+.mem-foot{margin-top:12px;font-size:11.5px;color:var(--narration);font-style:italic}
+.mem-empty{font-size:13px;color:var(--ink-soft);padding:6px 0}
+
+/* ---- Promptlar paneli ---- */
+.ptabs{display:flex;gap:6px;margin-bottom:10px}
+.ptab{flex:1;border:1px solid rgba(90,74,104,0.20);background:rgba(255,255,255,0.40);
+  border-radius:3px;padding:8px;font-size:13px;font-weight:600;color:var(--ink-soft);
+  cursor:pointer;font-family:var(--font-ui);transition:.15s}
+.ptab:hover{border-color:var(--accent);color:var(--ink)}
+.ptab.active{background:var(--accent-deep);border-color:var(--accent-deep);color:#fff}
+.pnames{display:none;flex-wrap:wrap;gap:6px;margin-bottom:10px;align-items:center}
+.pnames.show{display:flex}
+.pname{border:1px solid rgba(90,74,104,0.22);background:rgba(255,255,255,0.38);border-radius:4px;
+  padding:5px 11px;font-size:12.5px;color:var(--ink);cursor:pointer;font-family:var(--font-ui);
+  display:inline-flex;align-items:center;gap:6px;transition:.15s}
+.pname:hover{border-color:var(--accent)}
+.pname.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(109,77,122,0.14)}
+.pname.act{background:rgba(109,77,122,0.16)}
+.pname.act::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 5px rgba(var(--neon),0.6)}
+.pname.new{border-style:dashed;color:var(--ink-soft)}
+.pname.new:hover{color:var(--accent)}
+/* secili cipin ic araclari: yeniden adlandir (kalem) + sil (x) - .fact .del dilinde */
+.pname .pact{width:16px;height:16px;border-radius:3px;display:none;place-items:center;
+  color:var(--ink-soft);background:rgba(90,74,104,0.10);transition:.15s;line-height:1;font-size:12px}
+.pname.sel .pact{display:grid}
+.pname .pact:hover{background:rgba(109,77,122,0.25);color:var(--accent)}
+.pname .pact.del:hover{background:rgba(109,77,122,0.25);color:var(--accent)}
+.pname .pact svg{width:10px;height:10px}
+/* silme onayi - hafiza panelindeki .fact-confirm satirinin birebir esi */
+.pdel-confirm{display:flex;gap:8px;margin:-4px 0 10px;align-items:center;font-size:12px;color:var(--accent-deep)}
+.pdel-confirm button{border:none;border-radius:3px;padding:5px 11px;font-size:12px;cursor:pointer;
+  font-weight:600;transition:.15s;font-family:var(--font-ui)}
+.pdel-confirm .yes{background:var(--accent-deep);color:#fff}
+.pdel-confirm .yes:hover{background:var(--accent)}
+.pdel-confirm .no{background:rgba(90,74,104,0.12);color:var(--ink)}
+.pdel-confirm .no:hover{background:rgba(90,74,104,0.2)}
+.pnew-input{border:1px solid var(--accent);background:rgba(255,255,255,0.58);border-radius:4px;
+  padding:5px 10px;font-size:12.5px;color:var(--ink);font-family:var(--font-ui);outline:none;width:130px}
+.pactive-btn{border:none;border-radius:3px;padding:6px 11px;font-size:12px;font-weight:600;cursor:pointer;
+  background:rgba(109,77,122,0.14);color:var(--accent);transition:.15s;margin-left:auto}
+.pactive-btn:hover{background:var(--accent);color:#fff}
+#promptText{width:100%;min-height:40vh;resize:vertical;background:rgba(255,255,255,0.58);
+  border:1px solid rgba(90,74,104,0.20);border-radius:3px;padding:12px 14px;font-size:13.5px;
+  line-height:1.55;color:var(--ink);font-family:var(--font-ui);outline:none;transition:border-color .15s,box-shadow .15s}
+#promptText:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(109,77,122,0.15)}
+.pdirty{display:none;align-items:center;gap:8px;margin-top:8px;font-size:12.5px;color:var(--accent-deep)}
+.pdirty.show{display:flex}
+.pdirty button{border:none;border-radius:3px;padding:5px 11px;font-size:12px;cursor:pointer;font-weight:600}
+#pdirtySave{background:var(--accent-deep);color:#fff}
+#pdirtySave:hover{background:var(--accent)}
+#pdirtyDrop{background:rgba(90,74,104,0.12);color:var(--ink)}
+#pdirtyDrop:hover{background:rgba(90,74,104,0.2)}
+.pfoot{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}
+.pmsg{margin-right:auto;font-size:12px;color:var(--ink-soft);font-style:italic}
+.pmsg.ok{color:#5d7f4c}
+.pmsg.err{color:var(--accent-deep)}
+.pbtn{border:none;border-radius:3px;padding:10px 16px;font-size:13px;font-weight:600;cursor:pointer;
+  font-family:var(--font-ui);transition:.15s}
+.pbtn.solid{background:var(--accent-deep);color:#fff;box-shadow:0 6px 16px rgba(74,51,87,0.22)}
+.pbtn.solid:hover{background:var(--accent);transform:translateY(-1px)}
+.pbtn.solid:active{transform:translateY(0)}
+.pbtn.ghost{background:rgba(90,74,104,0.10);color:var(--ink)}
+.pbtn.ghost:hover{background:rgba(90,74,104,0.18)}
+
+/* ---- Ses ayarları paneli ---- */
+.vauto{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink);margin:4px 0 14px}
+.vrow{display:flex;align-items:center;gap:12px;margin:14px 0}
+.vrow .vl{flex:none;width:78px;font-size:13px;color:var(--ink)}
+.vrow .vval{flex:none;width:44px;text-align:right;font-size:12.5px;color:var(--accent);font-weight:600}
+.vrange{-webkit-appearance:none;appearance:none;flex:1;height:4px;border-radius:4px;
+  background:rgba(109,77,122,0.22);outline:none;cursor:pointer}
+.vrange::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:15px;height:15px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(60,44,78,0.30),0 0 0 1px rgba(var(--neon),0.30);cursor:pointer}
+.vrange:focus::-webkit-slider-thumb{box-shadow:0 1px 3px rgba(60,44,78,0.30),0 0 0 3px rgba(109,77,122,0.20)}
+.vfoot{display:flex;align-items:center;gap:8px;margin-top:16px}
+.vnote{margin-right:auto;font-size:11.5px;color:var(--narration);font-style:italic}
+
+/* ---- Sohbet arka plani paneli: secim + sabit oranli pan/zoom kirpici ---- */
+.bg-actions{display:flex;gap:8px;margin-bottom:10px}
+.bg-crop{display:none;position:relative;width:100%;overflow:hidden;cursor:grab;user-select:none;
+  touch-action:none;border:1px solid rgba(90,74,104,0.22);border-radius:3px;background:rgba(90,74,104,0.06)}
+.bg-crop.show{display:block}
+.bg-crop:active{cursor:grabbing}
+.bg-crop img{position:absolute;left:0;top:0;transform-origin:0 0;pointer-events:none;max-width:none;display:block}
+#bgZoomRow{display:none;margin-top:10px}
+#bgZoomRow.show{display:flex}
+/* renk tonu barI - kucuk kare renk yongalari, chip secim dili */
+.tint-bar{display:flex;gap:7px;align-items:center}
+.tint{width:22px;height:22px;border-radius:3px;border:1px solid rgba(90,74,104,0.25);cursor:pointer;
+  background:var(--c,transparent);transition:.15s;padding:0}
+.tint.auto{background:linear-gradient(135deg,#ECE8E1 49%,#1E1E22 51%)}
+.tint:hover{border-color:var(--accent)}
+.tint.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(109,77,122,0.18)}

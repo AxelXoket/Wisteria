@@ -1,0 +1,38 @@
+# ============================================================================
+#  PRIVATE - never commit. The encrypted vault holds ALL prompt texts and
+#  long-term memory; even as ciphertext it is personal data and stays local.
+#  NOTE: patterns are ROOT-ANCHORED (/memory, not memory/) so they exclude the
+#  DATA folders only - backend/memory/ is source code and MUST ship.
+# ============================================================================
+/memory/
+/settings.json
+
+# Kullanicinin sectigi sohbet arka plani gorseli - kisisel dosya, yerelde kalir.
+/userdata/
+
+# Voice reference clips are personal recordings - they never leave this machine.
+/voices/*
+!/voices/README.md
+
+# Local caches (embedding model etc.)
+/models/
+
+# ============================================================================
+#  Environments & build output
+# ============================================================================
+.venv/
+tts_env/
+_internal/
+build/
+dist/
+*.exe
+*.spec
+__pycache__/
+*.py[cod]
+
+# ============================================================================
+#  OS / editor noise
+# ============================================================================
+Thumbs.db
+Desktop.ini
+.DS_Store

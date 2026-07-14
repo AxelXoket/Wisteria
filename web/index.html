@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-eval' 'sha256-wYAz8IaZYgygZNULe6Mb1inSWj9KoPce5+52n96rVzI='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;" />
+<title>Wisteria</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <canvas id="bg"></canvas>
+
+  <main class="chat" id="chat">
+    <div class="hdr">
+      <div class="name brandmark" id="charName" role="img" aria-label="Wisteria"></div>
+      <div class="status"><span class="live" id="liveDot"></span> <span id="statusText">baglaniyor...</span></div>
+      <button class="icon-btn off" id="ttsBtn" title="Otomatik seslendirme">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 10v4"/><path d="M7 7v10"/><path d="M11 4v16"/><path d="M15 7v10"/><path d="M19 10v4"/></svg>
+      </button>
+      <button class="icon-btn" id="newChat" title="Yeni sohbet">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 9 8 9"/></svg>
+      </button>
+      <button class="icon-btn" id="menuBtn" title="Men&#252;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+      </button>
+      <div class="menu" id="menu">
+        <button class="mi" data-modal="memory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+          Haf&#305;za
+        </button>
+        <button class="mi" data-modal="prompts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+          Promptlar
+        </button>
+        <button class="mi" data-modal="voice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><circle cx="4" cy="12" r="1.6"/><circle cx="12" cy="10" r="1.6"/><circle cx="20" cy="14" r="1.6"/></svg>
+          Ses ayarlar&#305;
+        </button>
+        <button class="mi" data-modal="text">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          Yaz&#305; ayarlar&#305;
+        </button>
+        <button class="mi" data-modal="bg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          Sohbet arka plan&#305;
+        </button>
+        <button class="mi" data-action="exportChat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Sohbeti d&#305;&#351;a aktar
+        </button>
+      </div>
+      <div class="confirm-pop" id="ncPop">
+        <div class="t">Sohbet s&#305;f&#305;rlans&#305;n m&#305;? Mevcut konu&#351;ma silinir.</div>
+        <div class="row">
+          <button type="button" class="yes" id="ncYes">S&#305;f&#305;rla</button>
+          <button type="button" class="no" id="ncNo">Vazge&#231;</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="messages" id="messages"></div>
+
+    <button type="button" class="jump-down" id="jumpDown" title="En alta in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+
+    <div class="overlay show" id="overlay">
+      <div class="spinner" id="spinner"></div>
+      <div class="t" id="overlayTitle">Model yukleniyor...</div>
+      <div class="d" id="overlayDetail">Ilk acilis birkac saniye surebilir.</div>
+    </div>
+
+    <div class="stage" id="stage"></div>
+
+    <div class="composer disabled" id="composer">
+      <button class="attach" id="attach" title="Gorsel ekle">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3.5 3.5 0 0 1 4.95 4.95l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <input type="file" id="file" accept="image/*" hidden />
+      <input type="text" id="text" placeholder="Bir şey yaz...   ( /ara araştır . /img görsel . sürükle-bırak )" />
+      <button class="send" id="send" title="Gonder" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+      </button>
+    </div>
+
+    <div class="drop" id="drop"><div class="box">Birak, ekleyeyim &#128247;</div></div>
+  </main>
+
+  <div class="lb" id="lb"><button class="close" id="lbclose">&times;</button><img id="lbimg" src="" alt="" /></div>
+
+  <div class="modal" id="modal">
+    <div class="modal-card" id="modalCard">
+      <div class="modal-head">
+        <div class="modal-title" id="modalTitle"></div>
+        <button class="modal-close" id="modalClose" title="Kapat">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody">
+
+        <section class="mpane" id="mMemory">
+          <div class="mem-load" id="memLoad">Y&#252;kleniyor...</div>
+          <p class="mem-recap" id="memRecap"></p>
+          <input type="text" class="mem-search" id="memSearch" placeholder="Bilgilerde ara..." />
+          <div class="mem-sec mem-sec-row" id="memFactsHead">
+            <span>Bilinenler</span>
+            <button type="button" class="pname new" id="memAddBtn">+ Bilgi ekle</button>
+          </div>
+          <div class="fact fadd" id="memAddRow">
+            <div class="frow">
+              <select class="fadd-type" id="faddType">
+                <option value="bilgi">bilgi</option>
+                <option value="identity">identity</option>
+                <option value="preference">preference</option>
+                <option value="milestone">milestone</option>
+              </select>
+              <input type="text" class="pnew-input fadd-text" id="faddText" maxlength="2000" placeholder="Hat&#305;rlas&#305;n istedi&#287;in bilgi..." />
+            </div>
+            <div class="fadd-row2">
+              <span class="vl">&#214;nem</span>
+              <input type="range" class="vrange" id="faddImp" min="1" max="10" step="1" value="7" />
+              <span class="vval" id="faddImpVal">7</span>
+              <button type="button" class="fadd-ok" id="faddOk">Ekle</button>
+              <button type="button" class="fadd-no" id="faddNo">Vazge&#231;</button>
+            </div>
+          </div>
+          <ul class="mem-facts" id="memFacts"></ul>
+          <details class="mem-epis" id="memEpis">
+            <summary>An&#305;lar (<span id="memEpiCount">0</span>)</summary>
+            <ul id="memEpisodes"></ul>
+          </details>
+          <div class="mem-foot" id="memFoot"></div>
+        </section>
+
+        <section class="mpane" id="mPrompts">
+          <div class="ptabs">
+            <button class="ptab active" data-kind="system">Sistem</button>
+            <button class="ptab" data-kind="character">Karakter</button>
+            <button class="ptab" data-kind="persona">Persona</button>
+          </div>
+          <div class="pnames" id="pnames"></div>
+          <textarea id="promptText" spellcheck="false" placeholder="Bo&#351;..."></textarea>
+          <div class="pdirty" id="pdirty">
+            <span>Kaydedilmemi&#351; de&#287;i&#351;iklikler var.</span>
+            <button type="button" id="pdirtySave">Kaydet</button>
+            <button type="button" id="pdirtyDrop">Vazge&#231;</button>
+          </div>
+          <div class="pfoot">
+            <span class="pmsg" id="pmsg"></span>
+            <button type="button" class="pbtn ghost" id="promptExport">D&#305;&#351;a aktar</button>
+            <button type="button" class="pbtn solid" id="promptSave">Kaydet</button>
+          </div>
+        </section>
+
+        <section class="mpane" id="mVoice">
+          <div class="vauto">
+            <label class="switch"><input type="checkbox" id="vAuto" /><span class="track"></span></label>
+            <span>Otomatik seslendirme</span>
+          </div>
+          <div class="vrow">
+            <span class="vl">H&#305;z</span>
+            <input type="range" class="vrange" id="vSpeed" min="0.9" max="1.3" step="0.05" value="1.1" />
+            <span class="vval" id="vSpeedVal">1.10</span>
+          </div>
+          <div class="vrow">
+            <span class="vl">Denoise</span>
+            <input type="range" class="vrange" id="vDenoi" min="0" max="0.95" step="0.05" value="0.75" />
+            <span class="vval" id="vDenoiVal">0.75</span>
+          </div>
+          <div class="vrow">
+            <span class="vl">Duygu</span>
+            <input type="range" class="vrange" id="vExag" min="0.25" max="1.2" step="0.05" value="0.5" />
+            <span class="vval" id="vExagVal">0.50</span>
+          </div>
+          <div class="vfoot">
+            <span class="vnote">De&#287;i&#351;iklikler bir sonraki c&#252;mlede duyulur.</span>
+            <button type="button" class="pbtn ghost" id="vTest">Deneme oku</button>
+          </div>
+        </section>
+
+        <section class="mpane" id="mText">
+          <div class="vrow">
+            <span class="vl">Punto</span>
+            <input type="range" class="vrange" id="tFont" min="13" max="19" step="0.5" value="15.5" />
+            <span class="vval" id="tFontVal">15.5</span>
+          </div>
+          <div class="vrow">
+            <span class="vl">Sat&#305;r aral&#305;&#287;&#305;</span>
+            <input type="range" class="vrange" id="tLine" min="1.3" max="1.95" step="0.05" value="1.62" />
+            <span class="vval" id="tLineVal">1.62</span>
+          </div>
+          <div class="vfoot">
+            <span class="vnote">Yaln&#305;zca sohbet mesajlar&#305;na uygulan&#305;r; yazma &#231;ubu&#287;u etkilenmez.</span>
+            <button type="button" class="pbtn ghost" id="tReset">Varsay&#305;lana d&#246;n</button>
+          </div>
+          <div class="mem-sec" id="tBgSec">Arka plan</div>
+          <div class="vrow">
+            <span class="vl">Kontrast</span>
+            <input type="range" class="vrange" id="tContrast" min="0" max="0.85" step="0.05" value="0.35" />
+            <span class="vval" id="tContrastVal">0.35</span>
+          </div>
+          <div class="vrow">
+            <span class="vl">Renk tonu</span>
+            <div class="tint-bar" id="tintBar">
+              <button type="button" class="tint auto sel" data-tint="auto" title="Otomatik (g&#246;rsele g&#246;re)"></button>
+              <button type="button" class="tint" data-tint="#ece8e1" style="--c:#ECE8E1" title="Kemik"></button>
+              <button type="button" class="tint" data-tint="#1e1e22" style="--c:#1E1E22" title="K&#246;m&#252;r"></button>
+              <button type="button" class="tint" data-tint="#3b2652" style="--c:#3B2652" title="Derin mor"></button>
+              <button type="button" class="tint" data-tint="#a58bc5" style="--c:#A58BC5" title="Leylak"></button>
+              <button type="button" class="tint" data-tint="#2c3142" style="--c:#2C3142" title="Gece mavisi"></button>
+            </div>
+          </div>
+          <span class="vnote">Arka plan g&#246;rseli yokken kontrast ve ton etkisizdir.</span>
+        </section>
+
+        <section class="mpane" id="mBg">
+          <div class="bg-actions">
+            <button type="button" class="pbtn ghost" id="bgPick">G&#246;rsel se&#231;</button>
+            <button type="button" class="pbtn ghost" id="bgClear">Kald&#305;r</button>
+            <input type="file" id="bgFile" accept="image/*" hidden />
+          </div>
+          <div class="bg-crop" id="bgCrop">
+            <img id="bgCropImg" alt="" draggable="false" />
+          </div>
+          <div class="vrow" id="bgZoomRow">
+            <span class="vl">Yak&#305;nl&#305;k</span>
+            <input type="range" class="vrange" id="bgZoom" min="1" max="3" step="0.01" value="1" />
+            <span class="vval" id="bgZoomVal">1.00</span>
+          </div>
+          <div class="vfoot">
+            <span class="vnote" id="bgNote">G&#246;rsel, mesaj alan&#305;n&#305;n arkas&#305;na yerle&#351;ir. Kaydetmeden &#246;nce s&#252;r&#252;kleyip yak&#305;nla&#351;t&#305;rarak konumland&#305;r.</span>
+            <button type="button" class="pbtn solid" id="bgSave">Kaydet</button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <div id="lock">
+    <div class="lock-card" id="lockCard">
+      <div class="lock-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      </div>
+      <div class="lock-title" id="lockTitle">Hafızan kilitli</div>
+      <div class="lock-sub" id="lockSub">Devam etmek için parolanı gir.</div>
+      <form class="lock-form" id="lockForm" autocomplete="off">
+        <input type="password" id="lockPass" placeholder="Parola" autocomplete="new-password" />
+        <input type="password" id="lockPass2" placeholder="Parolayı tekrarla" autocomplete="new-password" style="display:none" />
+        <div class="lock-err" id="lockErr"></div>
+        <button type="submit" class="lock-btn" id="lockBtn">Kilidi Aç</button>
+      </form>
+      <div class="lock-remember">
+        <label class="switch"><input type="checkbox" id="lockRemember" /><span class="track"></span></label>
+        <label for="lockRemember">Bu cihazda hatırla</label>
+        <span class="info" id="lockInfo">nedir?</span>
+      </div>
+      <div class="lock-confirm" id="lockConfirm">
+        <div class="h">Bu cihazda hatırla</div>
+        <div class="b">Parolan bu Windows hesabına bağlı, şifreli olarak saklanır (Windows DPAPI). Bir daha her açılışta sorulmaz - uygulama seninle otomatik açılır. Dürüst not: bu makinede senin oturumunda çalışan bir yazılım buna erişebilir; en yüksek gizlilik için kapalı bırak.</div>
+        <div class="row">
+          <button type="button" class="ok" id="rememberOk">Anladım, hatırla</button>
+          <button type="button" class="no" id="rememberCancel">Vazgeç</button>
+        </div>
+      </div>
+      <div class="lock-note" id="lockNote">Parolan hiçbir yere kaydedilmez. Unutursan hafıza geri gelmez.</div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <!-- Kurtarma: soguk ilk aciliste app.js'in yerel sunucudan yuklenmesi tek seferlik
+       basarisiz olabiliyor ve script etiketi kendini yeniden denemez; sayfa sonsuza
+       dek yukleme ekraninda kalirdi. app.js ilk satirinda __appBooted bayragini diker;
+       bayrak 3 sn icinde yoksa etiket taze istekle yeniden eklenir (en fazla 10 kez).
+       NOT: metin tek satir ve CSP'deki sha256 ile birebir ayni olmali - degistirirsen
+       hash'i yeniden hesapla. -->
+  <script>(function(){var n=0;function r(){if(window.__appBooted||n>=10)return;n++;var s=document.createElement('script');s.src='app.js?r='+n;document.body.appendChild(s);setTimeout(r,3000);}setTimeout(r,3000);})();</script>
+</body>
+</html>

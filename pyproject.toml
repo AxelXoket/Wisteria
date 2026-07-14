@@ -1,0 +1,40 @@
+[project]
+name = "wisteria-app"
+version = "0.1.0"
+description = "Local, offline desktop chat app (pywebview + WebView2) for GGUF models via llama.cpp."
+requires-python = ">=3.12"
+
+dependencies = [
+    "pywebview>=6.2",          # native window rendering the custom HTML UI (WebView2 on Windows)
+    "httpx[http2]>=0.28",      # streaming client to the local llama-server
+    "httpx-sse>=0.4",          # robust SSE parsing for token streaming
+    "Pillow>=11.3",            # image resize/convert (native AVIF); replaces ffmpeg for stills
+    "pillow-heif>=0.18",       # HEIC/HEIF support
+    "pydantic>=2.9",
+    "pywin32>=306; sys_platform == 'win32'",  # Job Objects, mutex, DPI
+    # Encrypted memory + prompts vault - REQUIRED (the system/character/persona
+    # prompts live inside the encrypted DB post-migration; without these the app
+    # runs with a placeholder prompt). Moved out of an optional extra after an
+    # exact `uv sync` removed them.
+    "apsw-sqlite3mc>=3.53",     # AES-256 encrypted SQLite (SQLite3 Multiple Ciphers)
+    "sqlite-vec>=0.1.9",        # vector KNN virtual table inside the same encrypted DB
+    "fastembed>=0.8",           # multilingual ONNX embeddings (CPU, zero VRAM)
+]
+
+[project.optional-dependencies]
+package = ["pyinstaller>=6.10"]
+# NOTE - voice (Chatterbox) deps are deliberately NOT an extra here. They live in a
+# DEDICATED venv (tts_env/, created by install-tts.bat) and run as a subprocess
+# (backend/tts_worker.py). Keeping them out of this table prevents an accidental
+# `uv sync --extra tts` from dragging torch/transformers into the app venv (which
+# would clash with the memory stack and re-add ~7 GB). The worker's dependency list,
+# for reference: chatterbox-tts>=0.1.7, noisereduce>=3.0, librosa>=0.10, scipy>=1.11,
+# soundfile>=0.12, sounddevice>=0.5, then torch==2.8.0+cu128 / torchaudio==2.8.0+cu128
+# (RTX 5080 Blackwell needs the cu128 wheels). See install-tts.bat.
+# (memory deps moved to [project.dependencies] - they are required, not optional)
+
+[project.scripts]
+wisteria-app = "main:main"
+
+[tool.uv]
+package = false
