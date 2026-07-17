@@ -13,9 +13,16 @@ from __future__ import annotations
 
 import threading
 
-# 384-dim (matches store.EMBED_DIM), 50+ languages incl. Turkish, ~220 MB.
+from ..logutil import log_for
+from .constants import EMBED_DIM
+
+_log = log_for("memory.embedder")
+
+# 50+ languages, ~220 MB. Boyut TEK kaynaktan (constants.EMBED_DIM) - eskiden
+# burada elle esitlenen ikinci bir kopya vardi; model degisiminde sessiz
+# uyusmazlik riskiydi.
 MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-DIM = 384
+DIM = EMBED_DIM
 
 
 class Embedder:
@@ -52,6 +59,14 @@ class Embedder:
         out: list[list[float]] = []
         for vec in vecs:
             a = np.asarray(vec, dtype=np.float32)
+            if a.shape[-1] != EMBED_DIM:
+                # ACIK hata: model degisti ve boyut artik tabloyla uyusmuyor.
+                # Eski davranis bunu yukarida sessizce yutar, Tier-3 habersiz olurdu.
+                _log.error("embedding boyutu %d != beklenen %d (model: %s)",
+                           a.shape[-1], EMBED_DIM, self._name)
+                raise RuntimeError(
+                    f"embedding dim {a.shape[-1]} != {EMBED_DIM}; "
+                    "model degistiyse constants.EMBED_DIM guncellenmeli")
             norm = float(np.linalg.norm(a)) or 1.0
             out.append((a / norm).tolist())
         return out

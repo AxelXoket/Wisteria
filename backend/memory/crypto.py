@@ -24,6 +24,7 @@ import ctypes.wintypes as wt
 import hashlib
 import hmac
 import secrets
+import time
 from pathlib import Path
 
 # ---------------------------------------------------------------- scrypt KDF
@@ -117,12 +118,27 @@ class KeyVault:
         """True once a passphrase has been set (salt + verifier exist)."""
         return self.salt_path.exists() and self.verifier_path.exists()
 
+    def can_derive(self) -> bool:
+        """Salt duruyor mu - parola anahtari hala turetilebilir mi."""
+        return self.salt_path.exists()
+
     def has_remembered(self) -> bool:
         return self.remember_path.exists()
 
     # -- first run: set the passphrase --------------------------------------
     def initialize(self, passphrase: str) -> bytes:
+        """YALNIZCA gercek ilk kurulum icindir - cagiran taraf (memory_api),
+        mem.db varken buraya asla girmemeyi garantiler (denetim K1: salt'in
+        ezilmesi = kasanin kalici kaybi). Emniyet agi olarak mevcut kimlik
+        dosyalari yine de silinmez, kenara alinir."""
         self.dir.mkdir(parents=True, exist_ok=True)
+        ts = int(time.time())
+        for p in (self.salt_path, self.verifier_path):
+            if p.exists():
+                try:
+                    p.replace(p.with_name(f"{p.name}.bak-{ts}"))
+                except OSError:
+                    pass
         salt = new_salt()
         key = derive_key(passphrase, salt)
         self.salt_path.write_bytes(salt)
@@ -159,12 +175,76 @@ class KeyVault:
             return key
         return None
 
-    # -- change passphrase (re-derive; caller must rekey the DB) -------------
-    def change_passphrase(self, new_passphrase: str) -> bytes:
+    def unlock_remembered_unverified(self) -> bytes | None:
+        """DPAPI blob'unu verifier KONTROLSUZ coz. Yalniz DB-dogrulamali
+        kurtarma akisi icindir: salt/verifier kayipken dogrulamayi DB yapar."""
+        if not self.remember_path.exists():
+            return None
+        try:
+            return dpapi_unprotect(self.remember_path.read_bytes())
+        except OSError:
+            return None
+
+    # -- DB-dogrulamali kurtarma ---------------------------------------------
+    # Ilke (denetim K1'in koku): anahtarin DOGRULUGUNUN nihai kaynagi sifreli
+    # DB'nin kendisidir; salt/verifier yalnizca kolayliktir. Verifier kaybi /
+    # bozulmasi / yarim kalmis parola degisimi, DB acilabildigi surece onarilir.
+
+    def heal(self, key: bytes) -> None:
+        """DB tarafindan dogrulanmis anahtar icin verifier'i yeniden yaz
+        (salt'a dokunulmaz; verifier = HMAC(key) salt'tan bagimsizdir)."""
+        self.verifier_path.write_bytes(make_verifier(key))
+
+    def recover_with_db(self, passphrase: str, db_check) -> bytes | None:
+        """Aday saltlarla (asil + yarim kalmis .new) anahtar turet; db_check(key)
+        True donen ilk anahtar icin kimlik dosyalarini tutarli hale getir ve
+        anahtari dondur. Hicbiri acmazsa None (dosyalara DOKUNULMAZ)."""
+        salt_new = self.salt_path.with_name("salt.bin.new")
+        ver_new = self.verifier_path.with_name("verifier.bin.new")
+        for sp in (self.salt_path, salt_new):
+            if not sp.exists():
+                continue
+            try:
+                salt = sp.read_bytes()
+                key = derive_key(passphrase, salt)
+            except Exception:
+                continue
+            if not db_check(key):
+                continue
+            try:  # iyilestirme: yazim hatasi girisi engellemez (anahtar dogru)
+                if sp != self.salt_path:
+                    self.salt_path.write_bytes(salt)
+                self.verifier_path.write_bytes(make_verifier(key))
+                for leftover in (salt_new, ver_new):
+                    if leftover.exists():
+                        leftover.unlink()
+            except OSError:
+                pass
+            return key
+        return None
+
+    # -- change passphrase ----------------------------------------------------
+    def change_passphrase(self, new_passphrase: str, rekey_fn) -> bytes:
+        """Parola degisimi, DOSYA pencereleri cokme-guvenli olacak sirayla:
+          1) yeni salt/verifier .new dosyalarina yazilir (asillar el degmemis)
+          2) rekey_fn(new_key) DB'yi yeni anahtara cevirir
+          3) .new dosyalari asillarin uzerine tasinir
+        1-2 arasi cokme: asil dosyalar + eski DB anahtari gecerli (kayip yok).
+        2-3 arasi cokme: recover_with_db .new salt'ini dener ve tamamlar.
+        SINIR: adim 2'nin kendisi (PRAGMA hexrekey) motor icidir ve burada
+        atomiklestirilemez - tam rekey ORTASINDA cokme iki anahtarin da
+        acamadigi bir DB birakabilir; UI baglanmadan once yedek stratejisi
+        (mem.db kopyasi) eklenmelidir. 3 sonrasi remember() oncesi cokme:
+        bayat device.key auto-unlock'u devre disi birakir (kilit ekrani calisir)."""
         salt = new_salt()
         key = derive_key(new_passphrase, salt)
-        self.salt_path.write_bytes(salt)
-        self.verifier_path.write_bytes(make_verifier(key))
+        salt_new = self.salt_path.with_name("salt.bin.new")
+        ver_new = self.verifier_path.with_name("verifier.bin.new")
+        salt_new.write_bytes(salt)
+        ver_new.write_bytes(make_verifier(key))
+        rekey_fn(key)
+        salt_new.replace(self.salt_path)
+        ver_new.replace(self.verifier_path)
         if self.remember_path.exists():
             self.remember(key)
         return key

@@ -25,15 +25,16 @@ REM ===========================================================================
 
 echo [0/4] JS sozdizimi kapisi (bozuk app.js paketlenemez)...
 where node >nul 2>nul
-if not errorlevel 1 (
-  node --check "web\app.js"
-  if errorlevel 1 (
-    echo !! web\app.js SOZDIZIMI HATASI - once duzelt. Bu hata sinifi daha once
-    echo !! sayfayi sessizce olduruyordu: UI sonsuza dek "Model yukleniyor"da kaliyordu.
-    goto :err
-  )
-) else (
-  echo    node bulunamadi - sozdizimi kontrolu atlandi
+if errorlevel 1 (
+  echo !! node bulunamadi - sozdizimi kapisi ZORUNLUDUR. Bu kapinin atladigi
+  echo !! hata sinifi sayfayi sessizce olduruyordu: UI sonsuza dek yuklemede kalir.
+  echo !! node kur: winget install OpenJS.NodeJS.LTS - ya da PATH'e ekle.
+  goto :err
+)
+node --check "web\app.js"
+if errorlevel 1 (
+  echo !! web\app.js SOZDIZIMI HATASI - once duzelt.
+  goto :err
 )
 
 echo [1/4] Paketleme bagimliliklari (pyinstaller)...
@@ -66,7 +67,16 @@ if errorlevel 1 goto :err
 echo.
 echo [3/4] Cikti app klasorune yerlestiriliyor (exe + _internal)...
 if exist "_internal" rmdir /S /Q "_internal"
+if exist "_internal" (
+  echo !! _internal silinemedi - Wisteria.exe hala acik olabilir. Kapat ve tekrar dene.
+  echo !! Eski _internal + yeni exe karisimi BOZUK paket uretir; devam edilmiyor.
+  goto :err
+)
 xcopy /E /I /Y "dist\Wisteria\_internal" "_internal" >nul
+if errorlevel 1 (
+  echo !! _internal kopyalanamadi - yarim kopya bozuk paket demektir.
+  goto :err
+)
 copy /Y "dist\Wisteria\Wisteria.exe" "Wisteria.exe" >nul
 if errorlevel 1 goto :err
 

@@ -70,6 +70,7 @@ function addUserMessage(t, imgUrl){
   if(imgUrl){ const im=document.createElement('img'); im.className='msg-img'; im.src=imgUrl;
     im.onclick=()=>openLightbox(imgUrl); if(t) el.appendChild(document.createElement('br')); el.appendChild(im); }
   messages.appendChild(el); scrollDown(true);  // kendi mesajin = dibe inme niyeti
+  return el;  // ret halinde geri alinabilsin (baloncuk kalir ama backend gormedi = sessiz kayipti)
 }
 
 /* ===== streaming (Python -> JS) ===== */
@@ -79,14 +80,35 @@ window.appNote=function(txt){ clearNote();
 function clearNote(){ if(curNote){ curNote.remove(); curNote=null; } }
 function noteFlash(txt){ window.appNote(txt); const el=curNote;   // gecici not: 3sn sonra kaybolur
   setTimeout(()=>{ if(el&&el.parentNode) el.remove(); if(curNote===el) curNote=null; },3000); }
+/* Akis watchdog'u: appStreamEnd HIC gelmezse (kopru olumu, surec cokusu) composer
+   sonsuza dek kilitli kalmasin. Her token zamanlayiciyi tazeler; backend'in kendi
+   180sn okuma siniri (llm.py _STREAM_TIMEOUT) ana guvence - buradaki 240sn
+   BILEREK daha genis kemer payidir, esitleme! */
+let streamWatch=null;
+function armStreamWatch(){ clearTimeout(streamWatch);
+  streamWatch=setTimeout(()=>{ if(!busy) return;
+    if(curTyping){ curTyping.remove(); curTyping=null; }
+    curAi=null; curRaw=''; setBusy(false); noteFlash('Yanıt akışı kesildi.'); },240000); }
+function disarmStreamWatch(){ clearTimeout(streamWatch); streamWatch=null; }
+/* /ara kaynak cipleri: not ("Araştırılıyor...") SILINEN bir elemandir - cipler ona
+   degil yanit baloncuguna aittir. Akistan once gelirlerse tamponda bekletilir. */
+let pendingSrc=null;
+function sourcesWrap(list){
+  const wrap=document.createElement('div'); wrap.style.marginTop='6px';
+  list.forEach(s=>{ const c=document.createElement('span'); c.className='source'; c.textContent='◆ '+(s.domain||''); wrap.appendChild(c); });
+  return wrap;
+}
 window.appStreamStart=function(){ clearNote(); resetSpk(); // yeni tur = sunucu tarafinda barge-in
+  armStreamWatch();
   curAi=document.createElement('div'); curAi.className='msg ai';
   const row=document.createElement('div'); row.className='name-row';
   const nm=document.createElement('span'); nm.className='name'; nm.textContent=aiName; row.appendChild(nm);
   const sp=document.createElement('button'); sp.className='spk'; sp.title='Bu mesaji seslendir';
   sp.innerHTML=SPK_SVG; row.appendChild(sp);
   const msgEl=curAi;  // kopyalama, akis bittikten sonra da DOGRU mesaji okusun
-  const cp=document.createElement('button'); cp.className='spk cpy'; cp.title='Mesaji kopyala';
+  // NOT 'spk' SINIFI DEGIL: mesaj alaninin delege dinleyicisi closest('.spk') ile
+  // hoparlorleri yakalar - kopya butonu o siniftayken her kopyalama mesaji SESLENDIRIYORDU
+  const cp=document.createElement('button'); cp.className='cpy'; cp.title='Mesaji kopyala';
   cp.innerHTML=COPY_SVG;
   cp.onclick=async()=>{
     const raw=msgEl.dataset.raw || (msgEl.querySelector('.body')?msgEl.querySelector('.body').innerText:'');
@@ -97,21 +119,23 @@ window.appStreamStart=function(){ clearNote(); resetSpk(); // yeni tur = sunucu 
   };
   row.appendChild(cp);
   curAi.appendChild(row);
+  if(pendingSrc){ curAi.appendChild(sourcesWrap(pendingSrc)); pendingSrc=null; }
   const body=document.createElement('span'); body.className='body'; curAi.appendChild(body);
   messages.appendChild(curAi);
   curTyping=document.createElement('div'); curTyping.className='typing'; curTyping.innerHTML='<span></span><span></span><span></span>';
   messages.appendChild(curTyping); curRaw=''; scrollDown(); };
 window.appStream=function(chunk){ if(!curAi) return; if(curTyping){ curTyping.remove(); curTyping=null; }
+  armStreamWatch();
   curRaw+=chunk; curAi.querySelector('.body').innerHTML=renderContent(curRaw); scrollDown(); };
-window.appStreamEnd=function(data){ if(curTyping){ curTyping.remove(); curTyping=null; }
+window.appStreamEnd=function(data){ disarmStreamWatch();
+  if(curTyping){ curTyping.remove(); curTyping=null; }
   if(curAi){ const fin=(data&&data.final)||curRaw;
     curAi.querySelector('.body').innerHTML=renderContent(fin);
     curAi.dataset.raw=fin; }  // per-mesaj seslendirme icin ham metin
   curAi=null; curRaw=''; setBusy(false); scrollDown(); };
 window.appSources=function(list){ if(!list||!list.length) return;
-  const wrap=document.createElement('div'); wrap.style.marginTop='6px';
-  list.forEach(s=>{ const c=document.createElement('span'); c.className='source'; c.textContent='◆ '+(s.domain||''); wrap.appendChild(c); });
-  (curAi||messages.lastElementChild||messages).appendChild(wrap); scrollDown(); };
+  if(curAi){ curAi.appendChild(sourcesWrap(list)); scrollDown(); }
+  else pendingSrc=list; };
 
 /* ===== gonderme ===== */
 const SEND_SVG=send.innerHTML;                    // ok isareti (bosta)
@@ -126,28 +150,52 @@ text.addEventListener('input',refreshSend);
 async function doSend(){
   if(!ready) return;
   if(busy){ try{ await window.pywebview.api.cancel_gen(); }catch(e){} return; }  // durdur
+  ncPopHide();                                     // acik "yeni sohbet" onayi gonderimle celismesin
   const t=text.value.trim(); const img=staged?staged.dataUrl:null;
   if(!t && !img) return;
-  addUserMessage(t,img); clearStage(); text.value=''; setBusy(true);
+  pendingSrc=null;                                 // onceki yarim turdan bayat kaynak cipi kalmasin
+  const bubble=addUserMessage(t,img); const stagedBak=staged;
+  clearStage(); text.value=''; setBusy(true);
   let r; try{ r=await window.pywebview.api.send(t, img); }catch(e){ r={ok:false}; }
-  if(!r||!r.ok){                                   // erken ret: composer'i asla kilitleme
+  if(!r||!r.ok){                                   // ret: SESSIZ KAYIP YOK - baloncuk kalkar, yazi geri gelir
     setBusy(false);
-    if(r&&r.error==='locked') window.appNote&&window.appNote('Önce kilidi açman gerekiyor.');
-    else if(r&&r.error==='busy'){ /* onceki tur hala kapaniyor; tekrar dene */ }
-  }
+    if(bubble&&bubble.parentNode) bubble.remove();
+    // await sirasinda kullanici yeni bir sey yazdiysa/ekledeyse ONU EZME
+    if(!text.value.trim()) text.value=t;
+    if(!staged && stagedBak) stageSet(stagedBak.dataUrl, stagedBak.name);
+    refreshSend();
+    if(r&&r.error==='locked') noteFlash('Önce kilidi açman gerekiyor.');
+    else if(r&&r.error==='busy') noteFlash('Önceki yanıt hâlâ kapanıyor, bir saniye sonra tekrar dene.');
+    else if(r&&r.error==='not_ready') noteFlash('Model henüz hazır değil.');
+    else noteFlash('Mesaj gönderilemedi.');
+  } else armStreamWatch();                         // ok dondu ama akis hic baslamazsa da kurtul
 }
 send.onclick=doSend;
-text.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
+text.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault();
+  if(!e.repeat) doSend(); } });  // basili tutulan Enter'in tekrarlari kendi uretimini IPTAL ediyordu
 
 /* ===== gorsel ekleme ===== */
-function stageImage(f){ const r=new FileReader(); r.onload=()=>{ staged={dataUrl:r.result,name:f.name};
-  stage.innerHTML=`<div class="chip"><img src="${r.result}"><span class="fn"></span><button class="rm">&times;</button></div>`;
-  stage.querySelector('.fn').textContent=f.name; stage.classList.add('show');
-  stage.querySelector('img').onclick=()=>openLightbox(r.result);
-  stage.querySelector('.rm').onclick=clearStage; refreshSend(); }; r.readAsDataURL(f); }
+function stageSet(dataUrl, name){
+  /* DOM insasi createElement ile: data-url'nin innerHTML sablonuna gomulmesi
+     (bozuk/tirnakli deger = markup enjeksiyonu riski) tamamen kalkar. */
+  staged={dataUrl, name};
+  stage.innerHTML='';
+  const chip=document.createElement('div'); chip.className='chip';
+  const im=document.createElement('img'); im.src=dataUrl; im.onclick=()=>openLightbox(dataUrl); chip.appendChild(im);
+  const fn=document.createElement('span'); fn.className='fn'; fn.textContent=name||''; chip.appendChild(fn);
+  const rm=document.createElement('button'); rm.className='rm'; rm.innerHTML='&times;'; rm.onclick=clearStage; chip.appendChild(rm);
+  stage.appendChild(chip); stage.classList.add('show'); refreshSend();
+}
+function stageImage(f){
+  if(!f) return;
+  if(!(f.type||'').startsWith('image/')){ noteFlash('Yalnızca görsel dosyaları eklenebilir.'); return; }
+  if(f.size>9*1024*1024){ noteFlash('Görsel çok büyük (en fazla 9 MB).'); return; }
+  const r=new FileReader(); r.onload=()=>stageSet(r.result, f.name); r.readAsDataURL(f);
+}
 function clearStage(){ staged=null; stage.classList.remove('show'); stage.innerHTML=''; refreshSend(); }
 attach.onclick=()=>file.click();
-file.onchange=e=>{ if(e.target.files[0]) stageImage(e.target.files[0]); };
+file.onchange=e=>{ const f=e.target.files[0]; file.value='';  // reset: AYNI dosya yeniden secilebilsin
+  if(f) stageImage(f); };
 const chat=document.getElementById('chat');
 ['dragenter','dragover'].forEach(ev=>chat.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add('show'); }));
 ['dragleave','drop'].forEach(ev=>chat.addEventListener(ev,e=>{ e.preventDefault();
@@ -173,7 +221,12 @@ function ncPopShow(){ if(busy) return; menu.classList.remove('show'); ncPop.clas
 newChatBtn.onclick=(e)=>{ e.stopPropagation();
   if(ncPop.classList.contains('show')) ncPopHide(); else ncPopShow(); };
 document.getElementById('ncYes').onclick=async()=>{ ncPopHide();
-  try{ await window.pywebview.api.new_chat(); }catch(e){}
+  if(busy){ noteFlash('Yanıt bitince sıfırlayabilirsin.'); return; }  // popup acikken gonderim baslamis olabilir
+  let r; try{ r=await window.pywebview.api.new_chat(); }catch(e){ r=null; }
+  if(r&&r.ok===false){  // hicbir ret sessiz kalmasin
+    if(r.error==='busy') noteFlash('Yanıt bitince sıfırlayabilirsin.');
+    else noteFlash('Sohbet sıfırlanamadı.');
+    return; }
   messages.innerHTML=''; jumpDown.classList.remove('show','pulse'); };
 document.getElementById('ncNo').onclick=ncPopHide;
 addEventListener('click',e=>{ if(ncPop.classList.contains('show') && !ncPop.contains(e.target)) ncPopHide(); });
@@ -181,7 +234,11 @@ addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&(e.key==='n'||e.key==
   e.preventDefault(); ncPopShow(); } });  // Ctrl+N = ayni onayli akis
 
 /* ===== genel API kopruleri (pywebview yoksa mock: tarayici onizlemesi) ===== */
-const api=()=>(window.pywebview&&window.pywebview.api&&window.pywebview.api.tts_status)?window.pywebview.api:MOCK_API;
+/* pywebview VARSA her zaman gercek api: kismi baglanma penceresinde eskiden
+   MOCK'a dusuluyordu ve kullanici eylemi sahte dunyada sessizce "basarili"
+   oluyordu. Eksik metot artik TypeError firlatir - tum cagrilar try/catch'li,
+   sonraki poll kendini duzeltir. MOCK yalnizca tarayici onizlemesi icindir. */
+const api=()=>(window.pywebview&&window.pywebview.api)?window.pywebview.api:MOCK_API;
 
 /* ===== otomatik seslendirme (header ikonu = auto-speak modu) ===== */
 const ttsBtn=document.getElementById('ttsBtn');
@@ -202,9 +259,11 @@ function applyTts(st){
 /* Kendi kendini yoneten tazeleme: 'loading' gorurse yoklamayi KURAR (eskiden sadece
    kapatiyordu - motor gec yuklenmeye baslayinca dugme sonsuza dek yanip sonuyordu),
    yukleme bitince kapatir. Boylece hangi yoldan cagrilirsa cagrilsin dogru calisir. */
-async function refreshTts(){ try{ const st=await api().tts_status(); applyTts(st);
+let ttsFails=0;
+async function refreshTts(){ try{ const st=await api().tts_status(); ttsFails=0; applyTts(st);
   if(st.state==='loading'){ if(!ttsPoll) ttsPoll=setInterval(refreshTts,1500); }
-  else if(ttsPoll){ clearInterval(ttsPoll); ttsPoll=null; } }catch(e){} }
+  else if(ttsPoll){ clearInterval(ttsPoll); ttsPoll=null; } }
+  catch(e){ if(++ttsFails>=20 && ttsPoll){ clearInterval(ttsPoll); ttsPoll=null; } } }  // olu kopruyu sonsuza dek yoklama
 function startTtsPoll(){ refreshTts(); if(!ttsPoll) ttsPoll=setInterval(refreshTts,1500); }
 ttsBtn.onclick=async()=>{
   try{ const st=await api().set_tts_enabled(!ttsOn); applyTts(st);
@@ -216,19 +275,25 @@ const SPK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 const STOP_SVG='<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
 const COPY_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const CHECK_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-let playingBtn=null, spkPoll=null;
-function resetSpk(){ if(spkPoll){ clearInterval(spkPoll); spkPoll=null; }
+let playingBtn=null, spkPoll=null, spkEpoch=0;
+function resetSpk(){ spkEpoch++;  // ucustaki toggleSpeak cagrilarinin bileti gecersizlesir
+  if(spkPoll){ clearInterval(spkPoll); spkPoll=null; }
   if(playingBtn){ playingBtn.classList.remove('playing'); playingBtn.innerHTML=SPK_SVG;
     playingBtn.title='Bu mesaji seslendir'; playingBtn=null; } }
 async function toggleSpeak(btn, raw){
   if(btn===playingBtn){ try{ await api().stop_speaking(); }catch(e){} resetSpk(); return; }
   resetSpk();
+  const my=spkEpoch;                        // iki hizli tiklama yarisinda yalniz sonuncusu sahiplenir
   let r; try{ r=await api().speak_message(raw||''); }catch(e){ r={ok:false}; }
   if(!r||!r.ok) return;                    // motor hazir degilse sessiz gec (tooltip ikonda)
+  if(my!==spkEpoch) return;                // arada baska cagri/reset gecti - gosterge bizim degil
   playingBtn=btn; btn.classList.add('playing'); btn.innerHTML=STOP_SVG; btn.title='Durdur';
   let ticks=0;                              // emniyet: ~1 dk sonra gostergeyi birak
-  spkPoll=setInterval(async()=>{ let st; try{ st=await api().tts_status(); }catch(e){ st=null; }
+  const iv=setInterval(async()=>{
+    if(my!==spkEpoch){ clearInterval(iv); return; }  // yetim interval kendini oldurur (sonsuz yoklama bitti)
+    let st; try{ st=await api().tts_status(); }catch(e){ st=null; }
     if(!st||!st.speaking||++ticks>75) resetSpk(); },800);
+  spkPoll=iv;
 }
 messages.addEventListener('click',e=>{
   const btn=e.target.closest('.spk'); if(!btn) return;
@@ -248,7 +313,7 @@ menu.querySelectorAll('.mi').forEach(mi=>{ mi.onclick=()=>{ menu.classList.remov
   else if(mi.dataset.action==='exportChat') exportChat(); }; });
 async function exportChat(){
   let r; try{ r=await api().export_chat(); }catch(e){ r=null; }
-  if(r&&r.ok) noteFlash('Sohbet kaydedildi: '+r.path);
+  if(r&&r.ok) noteFlash('Sohbet kaydedildi'+(r.path?(': '+r.path):'.'));
   else if(r&&r.error==='empty') noteFlash('Aktarılacak sohbet yok.');
   else if(r&&r.error==='cancelled'){ /* sessiz */ }
   else noteFlash('Sohbet dışa aktarılamadı.');
@@ -256,13 +321,13 @@ async function exportChat(){
 
 /* ===== modal cercevesi ===== */
 const modal=document.getElementById('modal'), modalTitle=document.getElementById('modalTitle');
-const MODAL_TITLES={memory:'Hafıza', prompts:'Promptlar', voice:'Ses ayarları', text:'Yazı ayarları', bg:'Sohbet arka planı'};
+const MODAL_TITLES={memory:'Hafıza', prompts:'Promptlar', voice:'Ses ayarları', text:'Yazı ayarları', gen:'Üretim ayarları', bg:'Sohbet arka planı'};
 let modalOpen='';
 function openModal(which){
   modalOpen=which;
   modalTitle.textContent=MODAL_TITLES[which]||'';
   document.querySelectorAll('.mpane').forEach(p=>p.classList.remove('show'));
-  const pane={memory:'mMemory',prompts:'mPrompts',voice:'mVoice',text:'mText',bg:'mBg'}[which];
+  const pane={memory:'mMemory',prompts:'mPrompts',voice:'mVoice',text:'mText',gen:'mGen',bg:'mBg'}[which];
   if(pane) document.getElementById(pane).classList.add('show');
   modal.classList.add('show');
   if(which==='memory'){ loadMemory(); startMemPoll(); }
@@ -270,6 +335,7 @@ function openModal(which){
     if(which==='prompts') loadPrompts();
     else if(which==='voice') loadVoice();
     else if(which==='text') loadTextPrefs();
+    else if(which==='gen') loadGen();
     else if(which==='bg') bgPaneOpen(); }
 }
 function closeModal(){
@@ -289,12 +355,17 @@ const memLoad=document.getElementById('memLoad'), memRecap=document.getElementBy
   memEpiCount=document.getElementById('memEpiCount'), memFoot=document.getElementById('memFoot');
 function fmtTs(ts){ if(!ts||isNaN(+ts)) return '';
   try{ return new Date(ts*1000).toLocaleDateString('tr-TR',{day:'numeric',month:'long',year:'numeric'}); }catch(e){ return ''; } }
+let memLoadEpoch=0, memLoading=false;
 async function loadMemory(){
   // yeniden cizim scroll konumunu SIFIRLAMASIN (unut sonrasi en uste ziplama)
+  const my=++memLoadEpoch;  // bayat TAM yukleme sonucu DOM'a yazamasin
+  memLoading=true;          // sessiz tazeleme, yukleme ucustayken TAMAMEN bekler
   const mbody=document.querySelector('.modal-body'); const mscroll=mbody?mbody.scrollTop:0;
   memLoad.style.display='block'; memRecap.textContent=''; memFacts.innerHTML='';
   memEpisodes.innerHTML=''; memFoot.textContent=''; memEpiCount.textContent='0';
   let r; try{ r=await api().memory_overview(); }catch(e){ r=null; }
+  if(my===memLoadEpoch) memLoading=false;  // en guncel yukleme biz isek bayragi birak
+  if(my!==memLoadEpoch) return;  // daha yeni bir cizim basladi - bu sonuc bayat
   memLoad.style.display='none';
   if(!r||!r.ok){ memRecap.textContent = (r&&r.error==='locked')?'Önce kilidi açman gerekiyor.':'Hafıza okunamadı.'; return; }
   memRecap.textContent = r.recap || 'Henüz bir özet yok - konuştukça oluşur.';
@@ -325,7 +396,10 @@ function factDots(el, importance){
 }
 async function refreshMemoryQuiet(){
   if(modalOpen!=='memory'){ stopMemPoll(); return; }  // emniyet: kacak interval kendini oldurur
+  if(memLoading) return;  // tam yukleme ucusta: ayni epoch'la yarisip satir CIFTLEMEYELIM
+  const my=memLoadEpoch;  // yukleme BIZDEN sonra baslarsa bayat sonucumuz DOM'a dokunmaz
   let r; try{ r=await api().memory_overview(); }catch(e){ return; }
+  if(my!==memLoadEpoch||memLoading) return;
   if(!r||!r.ok) return;
   const recap=r.recap||'Henüz bir özet yok - konuştukça oluşur.';
   if(memRecap.textContent!==recap) memRecap.textContent=recap;
@@ -389,6 +463,7 @@ function factEditClose(li, restore){
   delete li.dataset.orig;
   tx.contentEditable='false'; tx.removeAttribute('contenteditable');
   li.classList.remove('editing');
+  if(li._escH){ tx.removeEventListener('keydown', li._escH); li._escH=null; }  // dinleyici birikimi biter
   const box=li.querySelector('.fact-edit'); if(box) box.remove();
 }
 function toggleFactEdit(li){
@@ -416,9 +491,8 @@ function toggleFactEdit(li){
   no2.onclick=()=>factEditClose(li, true);
   r2.appendChild(no2);
   box.appendChild(r2); li.appendChild(box);
-  tx.addEventListener('keydown',function esc(e){
-    if(e.key==='Escape'){ e.stopPropagation(); factEditClose(li, true); tx.removeEventListener('keydown',esc); }
-  });
+  li._escH=e=>{ if(e.key==='Escape'){ e.stopPropagation(); factEditClose(li, true); } };
+  tx.addEventListener('keydown', li._escH);  // kaldirma HER kapanis yolunda (factEditClose)
   tx.focus();
   const sel=window.getSelection(), rgn=document.createRange();  // imlec metnin sonuna
   rgn.selectNodeContents(tx); rgn.collapse(false); sel.removeAllRanges(); sel.addRange(rgn);
@@ -618,7 +692,10 @@ function vReadouts(){ vSpeedVal.textContent=(+vSpeed.value).toFixed(2);
   vDenoiVal.textContent=(+vDenoi.value).toFixed(2); vExagVal.textContent=(+vExag.value).toFixed(2); }
 async function loadVoice(){
   let r; try{ r=await api().tts_get_params(); }catch(e){ r=null; }
-  if(r&&r.ok){ vSpeed.value=r.speed; vDenoi.value=r.denoise_prop; vExag.value=r.exaggeration;
+  if(r&&r.ok){  // eksik/bozuk alan slider'i orta noktaya SIFIRLAMASIN (sonraki dokunus kalicilesirdi)
+    if(Number.isFinite(+r.speed)) vSpeed.value=r.speed;
+    if(Number.isFinite(+r.denoise_prop)) vDenoi.value=r.denoise_prop;
+    if(Number.isFinite(+r.exaggeration)) vExag.value=r.exaggeration;
     vAuto.checked=!!r.auto; }
   vReadouts();
 }
@@ -655,9 +732,122 @@ tFont.oninput=tPush; tLine.oninput=tPush;
 document.getElementById('tReset').onclick=()=>{ tFont.value=15.5; tLine.value=1.62; tPush(); };
 async function loadTextPrefs(){
   let r; try{ r=await api().ui_text_get(); }catch(e){ r=null; }
-  const fp=(r&&r.ok)?+r.font_px:15.5, lh=(r&&r.ok)?+r.line_height:1.62;
+  const fp=(r&&r.ok&&Number.isFinite(+r.font_px))?+r.font_px:15.5,
+        lh=(r&&r.ok&&Number.isFinite(+r.line_height))?+r.line_height:1.62;
   tFont.value=fp; tLine.value=lh; tReadouts(); applyMsgText(fp,lh);
 }
+
+/* ===== Uretim ayarlari paneli =====
+   Model kimligi SUNUCUDAN olculur (gen_get -> /props + /v1/models); ornekleme
+   kaydiraclari aninda + kalici (350ms debounce); baglam degisikligi modeli
+   onayli sekilde yeniden baslatir, sigmazsa backend onceki degere doner. */
+const gTemp=document.getElementById('gTemp'), gTopP=document.getElementById('gTopP'),
+  gTopK=document.getElementById('gTopK'), gMinP=document.getElementById('gMinP'),
+  gRep=document.getElementById('gRep'), gMaxT=document.getElementById('gMaxT'),
+  gCtx=document.getElementById('gCtx'), gCtxVal=document.getElementById('gCtxVal'),
+  gCtxApply=document.getElementById('gCtxApply'), gCtxState=document.getElementById('gCtxState');
+const GEN_DEFAULTS={temperature:0.8, top_p:0.95, top_k:64, min_p:0.02, repeat_penalty:1.05, max_tokens:2048};
+const GEN_SLIDERS=[
+  ['temperature', gTemp, 'gTempVal', v=>(+v).toFixed(2)],
+  ['top_p',       gTopP, 'gTopPVal', v=>(+v).toFixed(2)],
+  ['top_k',       gTopK, 'gTopKVal', v=>String(Math.round(+v))],
+  ['min_p',       gMinP, 'gMinPVal', v=>(+v).toFixed(3)],
+  ['repeat_penalty', gRep, 'gRepVal', v=>(+v).toFixed(2)],
+  ['max_tokens',  gMaxT, 'gMaxTVal', v=>String(Math.round(+v))],
+];
+let gCtxSteps=[16384], gCtxActive=16384;
+function gCtxFmt(n){ return (+n).toLocaleString('tr-TR'); }
+function gReadouts(){
+  GEN_SLIDERS.forEach(([k,el,vid,fmt])=>{ document.getElementById(vid).textContent=fmt(el.value); });
+  const v=gCtxSteps[Math.min(gCtxSteps.length-1, +gCtx.value)]||gCtxActive;
+  gCtxVal.textContent=gCtxFmt(v);
+  gCtxApply.disabled=(v===gCtxActive);
+  gCtxApply.style.opacity=gCtxApply.disabled?'.45':'';
+}
+let gSaveT=null;
+function gPush(){
+  gReadouts();
+  clearTimeout(gSaveT);
+  gSaveT=setTimeout(async()=>{
+    const s={}; GEN_SLIDERS.forEach(([k,el])=>{ s[k]=+el.value; });
+    try{ await api().gen_set(s); }catch(e){}
+  },350);
+}
+GEN_SLIDERS.forEach(([k,el])=>{ el.addEventListener('input',gPush); });
+document.getElementById('gReset').onclick=()=>{
+  GEN_SLIDERS.forEach(([k,el])=>{ el.value=GEN_DEFAULTS[k]; }); gPush();
+};
+function gBuildCtxSteps(trainMax){
+  const base=[4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072,196608,262144];
+  const ceil=trainMax||131072;
+  gCtxSteps=base.filter(v=>v<=ceil);
+  if(!gCtxSteps.includes(gCtxActive)){ gCtxSteps.push(gCtxActive); gCtxSteps.sort((a,b)=>a-b); }
+  gCtx.min='0'; gCtx.max=String(gCtxSteps.length-1); gCtx.step='1';
+  gCtx.value=String(Math.max(0, gCtxSteps.indexOf(gCtxActive)));
+}
+async function loadGen(){
+  let r; try{ r=await api().gen_get(); }catch(e){ r=null; }
+  if(!r||!r.ok){
+    // panel bos/bayat kalirsa Uygula olu bir onay akisina goturuyordu:
+    // durumu soyle ve butonu kilitle (sonraki acilis yeniden dener)
+    gCtxState.textContent='Panel yüklenemedi, ayarlar panelini kapatıp tekrar aç.';
+    gCtxApply.disabled=true; gCtxApply.style.opacity='.45';
+    return;
+  }
+  GEN_SLIDERS.forEach(([k,el])=>{ if(r.sampling&&r.sampling[k]!==undefined) el.value=r.sampling[k]; });
+  gCtxActive=+r.ctx_active||16384;
+  const m=r.model;
+  document.getElementById('gAlias').textContent = m&&m.alias ? m.alias : (r.state==='ready'?'-':'model yükleniyor...');
+  document.getElementById('gParams').textContent = m&&m.n_params ? (m.n_params/1e9).toFixed(1)+' milyar' : '-';
+  document.getElementById('gSize').textContent = m&&m.size_bytes ? (m.size_bytes/1073741824).toFixed(2)+' GB' : '-';
+  document.getElementById('gTrain').textContent = m&&m.n_ctx_train ? gCtxFmt(m.n_ctx_train)+' token' : '-';
+  document.getElementById('gVis').textContent = m ? (m.vision?'Var':'Yok') : '-';
+  gBuildCtxSteps(m&&m.n_ctx_train);
+  gCtxState.textContent = r.detail==='ctx_reverted'
+    ? 'Seçilen boyut sığmadı, önceki değere dönüldü.'
+    : (r.detail==='ctx_reuse'
+    ? 'Paylaşılan sunucuya bağlanıldı; bağlam ayarı uygulanamadı.' : '');
+  gReadouts();
+}
+let gConfirmRow=null;
+gCtxApply.onclick=()=>{
+  if(gCtxApply.disabled) return;
+  if(gConfirmRow){ gConfirmRow.remove(); gConfirmRow=null; }
+  const v=gCtxSteps[+gCtx.value];
+  const row=document.createElement('div'); row.className='pdel-confirm';
+  const t=document.createElement('span');
+  t.textContent='Bağlam '+gCtxFmt(v)+' olacak ve model yeniden başlatılacak. Emin misin?';
+  row.appendChild(t);
+  const yes=document.createElement('button'); yes.className='yes'; yes.textContent='Başlat';
+  yes.onclick=async()=>{
+    row.remove(); gConfirmRow=null;
+    let r; try{ r=await api().gen_ctx_apply(v); }catch(e){ r=null; }
+    if(!(r&&r.ok)){  // ret artik SESSIZ degil: neden panelin durum satirinda
+      const msgs={busy:'Yanıt sürerken bağlam değiştirilemez.',
+                  not_ready:'Model hazır değil, birazdan tekrar dene.',
+                  reuse:'Paylaşılan sunucu kullanılıyor: bağlam buradan değiştirilemez.',
+                  value:'Geçersiz bağlam değeri.'};
+      gCtxState.textContent=(r&&msgs[r.error])||'Bağlam değişikliği başlatılamadı.';
+      return; }
+    gCtxState.textContent='';
+    if(!r.restarted){ gCtxActive=r.n_ctx; gReadouts(); return; }
+    gCtxActive=r.n_ctx;
+    closeModal();
+    ready=false;
+    overlayTitle.textContent='Model yeniden başlatılıyor...';
+    overlayDetail.textContent='Bağlam penceresi: '+gCtxFmt(v)+' token';
+    document.getElementById('spinner').style.display='';
+    overlay.classList.add('show');
+    composer.classList.add('disabled');
+    startPolling();
+  };
+  const no=document.createElement('button'); no.className='no'; no.textContent='Vazgeç';
+  no.onclick=()=>{ row.remove(); gConfirmRow=null; };
+  row.appendChild(yes); row.appendChild(no);
+  gCtxApply.parentElement.insertAdjacentElement('afterend', row);
+  gConfirmRow=row;
+};
+gCtx.addEventListener('input',()=>{ if(gConfirmRow){ gConfirmRow.remove(); gConfirmRow=null; } gReadouts(); });
 
 /* ===== Sohbet arka plani =====
    Gorsel kopruden data URI olarak gelir/gider (dosya userdata/'da - rebuild silmez).
@@ -731,8 +921,12 @@ function syncBgUI(){
 async function loadBg(){
   let r; try{ r=await api().ui_bg_get(); }catch(e){ r=null; }
   if(!r||!r.ok) return;
-  bgState={has:!!r.has, lum:+r.lum||0.5, contrast:(+r.contrast||0), tint:r.tint||'auto',
-    dataurl:r.dataurl||'', rect:(Array.isArray(r.rect)&&r.rect.length===4)?r.rect.map(Number):[0,0,1,1]};
+  let rect=(Array.isArray(r.rect)&&r.rect.length===4)?r.rect.map(Number):[0,0,1,1];
+  if(!rect.every(Number.isFinite)) rect=[0,0,1,1];  // NaN rect gecersiz kadraj uretiyordu
+  // url("...") CSS baglamina giren deger: tirnak iceren bozuk kayit stil enjeksiyonu olmasin
+  const du=(typeof r.dataurl==='string' && r.dataurl.indexOf('"')===-1)?r.dataurl:'';
+  bgState={has:!!r.has&&!!du, lum:Number.isFinite(+r.lum)?+r.lum:0.5,
+    contrast:(+r.contrast||0), tint:r.tint||'auto', dataurl:du, rect};
   if(isNaN(bgState.contrast)) bgState.contrast=0.35;
   bgNatural=null;
   bgApply(); syncBgUI();
@@ -827,21 +1021,35 @@ bgClearBtn.onclick=async()=>{
 
 /* ===== durum polling ===== */
 let lastState='';
+const overlayRetry=document.getElementById('overlayRetry');
 async function pollStatus(){
   if(!(window.pywebview&&window.pywebview.api)) return;                    // kopru henuz yok - interval yeniden dener
   if(typeof window.pywebview.api.status!=='function') return;              // stub var ama metotlar bagli degil - bekle
   let s; try{ s=await window.pywebview.api.status(); }catch(e){ return; }
-  lastState=s.state||'';
+  if(!s||!s.state) return;             // beklenmedik bos yanit polli dusurmesin
+  lastState=s.state;
   if(s.character) aiName=s.character;  // yalniz mesaj etiketleri icin - baslik marka adinda kalir
   if(s.state==='ready'){ ready=true; liveDot.classList.add('ok'); statusText.textContent='yerel . cevrimdisi';
-    overlay.classList.remove('show'); composer.classList.remove('disabled'); refreshSend(); refreshTts(); }
+    overlay.classList.remove('show'); composer.classList.remove('disabled');
+    overlayRetry.style.display='none'; refreshSend(); refreshTts(); }
   else if(s.state==='error'){ ready=false; liveDot.classList.remove('ok'); statusText.textContent='hata';
     overlayTitle.textContent='Baslatilamadi'; overlayDetail.textContent=s.detail||'llama-server hazir degil.';
-    document.getElementById('spinner').style.display='none'; }
+    document.getElementById('spinner').style.display='none';
+    overlayRetry.style.display=''; }   // hata artik terminal degil: yeniden dene
   else { statusText.textContent='yukleniyor...'; }
 }
 function startPolling(){ pollStatus(); const iv=setInterval(async()=>{ await pollStatus();
-  if(ready||lastState==='error'){ clearInterval(iv); } }, 900); }  // error = nihai durum, polli birak
+  if(ready||lastState==='error'){ clearInterval(iv); } }, 900); }  // error'da poll durur; retry yeniden baslatir
+overlayRetry.onclick=async()=>{
+  let r; try{ r=await api().retry_boot(); }catch(e){ r=null; }
+  if(!(r&&r.ok)) return;
+  overlayRetry.style.display='none';
+  document.getElementById('spinner').style.display='';
+  overlayTitle.textContent='Model yukleniyor...';
+  overlayDetail.textContent='Yeniden deneniyor.';
+  statusText.textContent='yukleniyor...'; lastState='';
+  startPolling();
+};
 
 /* Yazar adi tazeleme: polling 'ready'de durur ama aktif karakter kilit ACILINCA
    (ya da panelden degistirilince) belli olur - o anlarda tek seferlik ceker.
@@ -860,17 +1068,33 @@ const lock=document.getElementById('lock'), lockCard=document.getElementById('lo
   lockSub=document.getElementById('lockSub'), lockRemember=document.getElementById('lockRemember'),
   lockInfo=document.getElementById('lockInfo'), lockConfirm=document.getElementById('lockConfirm');
 let lockFirstRun=false, rememberConfirmed=false;
-const memApi=()=>(window.pywebview&&window.pywebview.api&&window.pywebview.api.memory_state)?window.pywebview.api:MOCK_MEM;
+const memApi=()=>(window.pywebview&&window.pywebview.api)?window.pywebview.api:MOCK_MEM;
 
+let initLockTries=0;
 async function initLock(){
   let st; try{ st=await memApi().memory_state(); }catch(e){ st=null; }
-  if(!st || !st.enabled || st.unlocked){ lock.classList.remove('show'); return; } // kapali/acik -> ekran yok (mock kalintisi da gider)
-  lockFirstRun=!st.initialized;
+  if(!st){
+    // kopru kismen bagli olabilir (soguk acilis stub penceresi): tek atista
+    // vazgecmek kilit ekranini SONSUZA DEK gizliyordu - sinirli tekrar dene
+    if(++initLockTries<=40) setTimeout(initLock,1500);
+    return;
+  }
+  initLockTries=0;
+  if(!st.enabled || st.unlocked){ lock.classList.remove('show'); return; } // kapali/acik -> ekran yok (mock kalintisi da gider)
+  // kasa dosyasi (mem.db) DURUYORSA bu asla ilk kurulum degildir: kimlik
+  // dosyalari kayip demektir ve MEVCUT parola DB-dogrulamasiyla onarir -
+  // kullaniciya "yeni parola olustur" demek hem yanlis hem korkutucuydu
+  lockFirstRun=!st.initialized && !st.has_data;
   if(lockFirstRun){
     lockTitle.textContent='Özel hafıza oluştur';
     lockSub.textContent='Sohbetlerini şifreli tutmak için bir parola belirle.';
     lockPass.placeholder='Yeni parola'; lockPass2.style.display='block';
     lockBtn.textContent='Oluştur ve Başla';
+  } else if(!st.initialized && st.has_data){  // onarim girisi (verifier/salt kayip)
+    lockTitle.textContent='Hafızan kilitli';
+    lockSub.textContent='Kasa dosyaları onarılacak; mevcut parolanı gir.';
+    lockPass.placeholder='Parola'; lockPass2.style.display='none';
+    lockBtn.textContent='Kilidi Aç';
   } else {                                   // gec gelen GERCEK api, mock'un ilk-kurulum
     lockTitle.textContent='Hafızan kilitli';  // metinlerini birakmis olabilir -> sifirla
     lockSub.textContent='Devam etmek için parolanı gir.';
@@ -891,7 +1115,14 @@ lockForm.addEventListener('submit', async(e)=>{
   let res; try{ res=await memApi().memory_unlock(p, !!(lockRemember.checked&&rememberConfirmed)); }catch(err){ res={ok:false}; }
   lockBtn.disabled=false;
   if(res&&res.ok){ unlockReveal(); }
-  else { lockErrShow(lockFirstRun?'Oluşturulamadı.':'Parola yanlış.'); lockShake(); lockPass.value=''; lockPass.focus(); }
+  else {
+    const msgs={wrong:'Parola yanlış.',
+                damaged:'Kasa kimlik dosyaları eksik ve onarılamıyor. Yedekten salt.bin ya da device.key geri yüklemen gerekiyor.',
+                open:'Kasa açılamadı. Ayrıntı: userdata/logs klasörü.',
+                vault:'Kasa işlemi başarısız oldu. Ayrıntı: userdata/logs.'};
+    lockErrShow((res&&msgs[res.error]) || (lockFirstRun?'Oluşturulamadı.':'Parola yanlış.'));
+    lockShake(); lockPass.value=''; lockPass.focus();
+  }
 });
 function unlockReveal(){
   const chatEl=document.getElementById('chat');
@@ -909,7 +1140,7 @@ document.getElementById('rememberOk').onclick=()=>{ rememberConfirmed=true; lock
 document.getElementById('rememberCancel').onclick=()=>{ rememberConfirmed=false; lockRemember.checked=false; lockConfirm.classList.remove('show'); };
 /* tarayici onizlemesi icin mock (pywebview yokken) */
 const MOCK_MEM={ _init:false, _unlocked:false,
-  async memory_state(){ return {enabled:true, initialized:this._init, unlocked:this._unlocked}; },
+  async memory_state(){ return {enabled:true, initialized:this._init, unlocked:this._unlocked, has_data:this._init}; },
   async memory_unlock(p){ if(p&&p.length>=4){ this._init=true; this._unlocked=true; return {ok:true}; } return {ok:false}; } };
 
 /* tarayici onizlemesi icin genis mock (menu/modal/tts) */
@@ -972,6 +1203,16 @@ const MOCK_API={
     this._bg.rect=(Array.isArray(rect)&&rect.length===4)?rect:[0,0,1,1]; return {ok:true}; },
   async ui_bg_clear(){ this._bg.has=false; this._bg.dataurl=''; return {ok:true}; },
   async ui_bg_prefs(c,t){ this._bg.contrast=+c; this._bg.tint=t; return {ok:true,contrast:+c,tint:t}; },
+  _gen:{temperature:0.8, top_p:0.95, top_k:64, min_p:0.02, repeat_penalty:1.05, max_tokens:2048},
+  _genCtx:16384,
+  async gen_get(){ return {ok:true, state:'ready', detail:'', sampling:{...this._gen},
+    limits:{temperature:[0.1,2,0.05], top_p:[0.5,1,0.01], top_k:[1,200,1],
+            min_p:[0,0.5,0.005], repeat_penalty:[1,1.5,0.01], max_tokens:[256,8192,256]},
+    ctx_active:this._genCtx,
+    model:{alias:'onizleme-modeli', n_ctx_train:262144, n_params:11.9e9, size_bytes:7.37e9, vision:true}}; },
+  async gen_set(s){ Object.assign(this._gen, s); return {ok:true, applied:s}; },
+  async gen_ctx_apply(n){ this._genCtx=+n; return {ok:true, n_ctx:+n, restarted:false}; },
+  async retry_boot(){ return {ok:false,error:'state'}; },
 };
 
 /* ===== boot ===== */

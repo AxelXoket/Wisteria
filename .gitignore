@@ -6,6 +6,9 @@
 # ============================================================================
 /memory/
 /settings.json
+# Atomik yazim artigi + bozuk-dosya yedekleri (api_key/model adi icerebilir)
+/settings.tmp-*
+/settings.json.corrupt-*
 
 # Kullanicinin sectigi sohbet arka plani gorseli - kisisel dosya, yerelde kalir.
 /userdata/

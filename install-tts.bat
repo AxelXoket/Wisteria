@@ -35,6 +35,11 @@ if errorlevel 1 goto :err
 echo.
 echo [4/4] Verifying the voice venv sees the GPU (expect: 2.8.0+cu128 12.8 (12, 0))...
 tts_env\Scripts\python.exe -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_capability())"
+if errorlevel 1 (
+  echo !! Dogrulama BASARISIZ: torch import edilemedi ya da GPU gorulmedi.
+  echo !! Basari banner'i bu durumda YANILTICIYDI - kurulum tamam sayilmaz.
+  goto :err
+)
 
 echo.
 echo ============================================================================

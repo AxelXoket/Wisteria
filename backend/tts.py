@@ -29,7 +29,12 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
+
+from .logutil import err_brief, log_for
+
+_log = log_for("tts")
 
 try:  # Windows job object: worker dies WITH the app (never orphans holding VRAM)
     import win32api  # type: ignore
@@ -146,6 +151,17 @@ class TtsEngine:
         self._job = None  # Windows job object handle (worker dies with the app)
         self._seq = 0
         self._buf = ""
+        # Yukleme kapisi (denetim O9): worker stdin'i ANCAK model yuklendikten
+        # sonra okur; o pencerede boruya yazmak 4KB tamponu doldurup bridge
+        # thread'ini suresiz bloklayabilir. Ayar guncellemeleri hazir olana dek
+        # burada COALESCE edilir (son deger kazanir), ready'de tek seferde gider.
+        self._got_ready = False
+        self._pending_params: dict = {}
+        self._closing = False    # shutdown ile yarisan reader hayalet "error" basmasin
+        self._speak_ts = 0.0     # takili "konusuyor" gostergesi icin nabiz
+        # stdin'e artik iki thread yazabilir (bridge cagrilari + reader'in
+        # ready-flush'i): kilitsiz es zamanli write satirlari karistirabilirdi
+        self._wlock = threading.Lock()
 
     # ------------------------------------------------------------- configuration
 
@@ -153,6 +169,10 @@ class TtsEngine:
         self._cfg = cfg
 
     def status(self) -> dict:
+        # kemer: done/error olayi kacarsa (olu akis) gosterge sonsuza dek donmesin
+        if self._speaking and self._speak_ts and time.time() - self._speak_ts > 120:
+            _log.warning("speaking gostergesi 120sn olaysiz kaldi - birakiliyor")
+            self._speaking = False
         return {
             "enabled": self._auto,  # back-compat alias for the frontend
             "auto": self._auto,
@@ -245,6 +265,8 @@ class TtsEngine:
                 return
             self._state = "loading"
             self._detail = ""
+            self._got_ready = False
+            self._closing = False
             try:
                 self._proc = subprocess.Popen(
                     [str(py), str(script), json.dumps(self._worker_cfg())],
@@ -256,10 +278,13 @@ class TtsEngine:
                 self._proc = None
                 self._state = "error"
                 self._detail = f"worker baslatilamadi: {exc}"
+                _log.error("tts worker spawn hatasi err=%s", err_brief(exc))
                 return
             self._make_job()  # tie the worker's lifetime to the app (no VRAM orphans)
-        threading.Thread(target=self._reader, args=(self._proc,), daemon=True).start()
-        threading.Thread(target=self._drain_stderr, args=(self._proc,), daemon=True).start()
+            proc = self._proc  # kilit ICINDE yakala: kilitsiz yeniden okuma,
+        # shutdown'la yarisip thread'e None gecirebiliyordu (hayalet error)
+        threading.Thread(target=self._reader, args=(proc,), daemon=True).start()
+        threading.Thread(target=self._drain_stderr, args=(proc,), daemon=True).start()
 
     def _make_job(self) -> None:
         """Windows Job Object (KILL_ON_JOB_CLOSE): if the app dies for ANY reason,
@@ -292,11 +317,21 @@ class TtsEngine:
                     continue
                 kind = ev.get("ev")
                 if kind == "ready":
-                    self._state = "ready"
+                    # gecis + bekleyen-ayar devri AYNI kilit altinda: kilitsiz
+                    # halde "bayragi gordum-stashladim" ile "flip ettim-flush
+                    # ettim" araya girisebiliyor, tam flip aninda gelen ayar
+                    # sonsuza dek beklemede kaliyordu (dogrulama turu bulgusu)
+                    with self._wlock:
+                        self._got_ready = True
+                        self._state = "ready"
+                        pend, self._pending_params = self._pending_params, {}
                     cloned = ev.get("cloned")
                     self._detail = "hazir (ses klonu)" if cloned else "hazir"
+                    if pend:  # yukleme sirasinda biriken ayarlar tek pakette
+                        self._send({"cmd": "config", **pend})
                 elif kind == "speaking":
                     self._speaking = True
+                    self._speak_ts = time.time()
                 elif kind == "done":
                     self._speaking = False
                 elif kind == "status":
@@ -307,16 +342,18 @@ class TtsEngine:
                     if self._state != "ready":
                         self._state = "error"
                     self._detail = str(ev.get("detail", ""))
+                    self._speaking = False  # hatali cumle gostergeyi takili birakmasin
         except Exception:
             pass
         # stdout closed -> worker exited (resident worker death is always an error)
-        if self._proc is proc:
+        if proc is not None and self._proc is proc and not self._closing:
             self._proc = None
             self._speaking = False
             if self._state != "unavailable":
                 self._state = "error"
                 if not self._detail:
                     self._detail = "worker beklenmedik sekilde kapandi"
+                _log.error("tts worker beklenmedik kapandi detail=%s", self._detail)
 
     def _drain_stderr(self, proc: subprocess.Popen) -> None:
         try:
@@ -329,28 +366,45 @@ class TtsEngine:
         proc = self._proc
         if proc is None or proc.stdin is None:
             return
+        # karar + eylem TEK kilit altinda: _got_ready kontrolu, stash ve pipe
+        # yazimi bolunemez - reader'in ready-flip'i ile yarisamaz
         try:
-            proc.stdin.write(json.dumps(msg) + "\n")
-            proc.stdin.flush()
-        except Exception:
-            pass
+            with self._wlock:
+                if not self._got_ready:
+                    # worker yukleme bitmeden stdin OKUMAZ: yazmak boruyu doldurup
+                    # bu (bridge) thread'ini suresiz bloklayabilirdi. Ayarlar
+                    # coalesce edilir; speak/stop yuklenirken anlamsiz - dusurulur.
+                    if msg.get("cmd") == "config":
+                        p = dict(msg)
+                        p.pop("cmd", None)
+                        self._pending_params.update(p)
+                    return
+                proc.stdin.write(json.dumps(msg) + "\n")
+                proc.stdin.flush()
+        except Exception as e:
+            _log.warning("tts stdin yazilamadi err=%s", err_brief(e))
 
     def _kill(self) -> None:
         proc = self._proc
         self._proc = None
         if proc is None:
             return
-        try:
-            if proc.stdin:
-                proc.stdin.write(json.dumps({"cmd": "shutdown"}) + "\n")
-                proc.stdin.flush()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=1.5)
-            return  # clean exit - tree is gone
-        except Exception:
-            pass
+        if self._got_ready:
+            # nazik yol yalniz worker stdin'i OKURKEN denenir; yuklenirken
+            # yazmak kapanisi suresiz asabilirdi (denetim O9) - o durumda
+            # dogrudan agac oldurmeye gecilir
+            try:
+                if proc.stdin:
+                    with self._wlock:
+                        proc.stdin.write(json.dumps({"cmd": "shutdown"}) + "\n")
+                        proc.stdin.flush()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=1.5)
+                return  # clean exit - tree is gone
+            except Exception:
+                pass
         # Graceful failed (e.g. worker still mid-load, stdin cmd not yet read).
         # proc is the VENV SHIM; terminate() would kill only the shim and orphan
         # the real interpreter child holding ~3.8 GB VRAM - kill the WHOLE TREE.
@@ -415,8 +469,10 @@ class TtsEngine:
         self._seq += 1
         # Optimistic: synthesis takes seconds before the worker's "speaking" event;
         # without this the UI's status poll sees speaking=False mid-synth and drops
-        # its playing indicator. The worker's done/error (or barge_in) clears it.
+        # its playing indicator. The worker's done/error (or barge_in) clears it;
+        # status()'un 120sn nabiz kemeri de kacan olaya karsi son guvence.
         self._speaking = True
+        self._speak_ts = time.time()
         self._send({"cmd": "speak", "seq": self._seq, "units": units})
         return True
 
@@ -426,6 +482,7 @@ class TtsEngine:
             self._send({"cmd": "config", **params})
 
     def shutdown(self) -> None:
+        self._closing = True  # reader'in dogal EOF'u hayalet "error" basmasin
         self._auto = False
         self._kill()
         self._state = "off"

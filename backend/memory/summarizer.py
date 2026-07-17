@@ -16,8 +16,28 @@ from __future__ import annotations
 import re
 
 from ..config import GenPreset
+from ..llm import LlamaError
+from ..logutil import err_brief, log_for
+from .constants import FACT_TYPES
 
-_FACT_TYPES = ["identity", "preference", "milestone", "commitment", "boundary", "fact", "insight"]
+_log = log_for("memory.summarizer")
+
+_FACT_TYPES = list(FACT_TYPES)  # tek kaynak: constants.py (sema enum'u buradan)
+
+
+class LLMUnavailable(RuntimeError):
+    """Model/tasima katmani hatasi: girdi SUCLU DEGIL, sonra yeniden denenebilir.
+
+    Ayrimin sebebi veri guvenligi: bu istisna yukari cikar ve turlar 'islendi'
+    olarak IMZALANMAZ - eski davranis sessizce bos liste dondurup turlarin
+    hafizaya hic islenmeden imzalanmasina yol aciyordu (sessiz hafiza kaybi).
+
+    status: varsa HTTP kodu - devre kesici kalici 4xx'i (or. desteklenmeyen
+    json_schema) hizli askiya almak icin kullanir."""
+
+    def __init__(self, msg: str, status: int | None = None) -> None:
+        super().__init__(msg)
+        self.status = status
 
 # Flat, grammar-friendly schema — a mid-size local model follows this reliably.
 OPS_SCHEMA = {
@@ -90,13 +110,17 @@ def _norm(s: str) -> str:
 
 
 def _evidence_supported(evidence: str, source_norm: str) -> bool:
-    """Quote-or-drop: the evidence must appear in (or strongly overlap) the source turns."""
+    """Quote-or-drop: the evidence must appear in (or strongly overlap) the source turns.
+
+    source_norm rol oneklerinden ARINDIRILMIS verilmelidir (bkz. extract_ops):
+    'user:'/'assistant:' her kaynakta gectiginden uydurma kanitlara bedava puan
+    veriyordu; kisa dolgu sozcukleri de (the/and/she) minimum uzunlukla elenir."""
     ev = _norm(evidence)
     if len(ev) < 6:
         return False
     if ev in source_norm:
         return True
-    toks = [t for t in ev.split() if len(t) > 2]  # lenient fallback for a lightly-paraphrased quote
+    toks = [t for t in ev.split() if len(t) > 3]  # lenient fallback for a lightly-paraphrased quote
     if not toks:
         return False
     return sum(1 for t in toks if t in source_norm) / len(toks) >= 0.8
@@ -110,23 +134,49 @@ class Summarizer:
         self._p_recap = GenPreset(temperature=0.3, top_p=0.9, top_k=40,
                                   min_p=0.0, repeat_penalty=1.05, max_tokens=200)
 
-    def extract_ops(self, ledger: list[tuple], new_turns: str) -> list[dict]:
-        """Return validated, evidence-checked ops. ledger = [(id, type, text, importance), ...]."""
-        ledger_txt = "\n".join(f"[{fid}] ({typ}, imp {imp}) {text}"
-                               for (fid, typ, text, imp) in ledger) or "(empty)"
-        user = (f"CURRENT LEDGER:\n{ledger_txt}\n\nNEW MESSAGES:\n{new_turns}\n\n"
-                "Return the JSON ops.")
-        messages = [{"role": "system", "content": _EXTRACT_SYS},
+    # ---- ortak yardimcilar (extract_ops + reflect ayni iskeleti paylasir) ----
+    @staticmethod
+    def _ledger_text(ledger: list) -> str:
+        # kayit metinleri TEK satira duzlestirilir: cok satirli bir kayit,
+        # 'NEW MESSAGES:' benzeri bolum basligi taklidi yapamaz (enjeksiyon)
+        return "\n".join(
+            f"[{f.id}] ({f.type}, imp {f.importance}) "
+            + re.sub(r"\s*\n\s*", " / ", f.text or "").strip()
+            for f in ledger)
+
+    def _ops_request(self, system: str, user: str, what: str) -> list:
+        """Sema-kisitli ops istegi. HER basarisizlik LLMUnavailable'dir: gramer
+        kisiti gecerli {"ops":[...]} garantiler; "ops" anahtari YOKSA yanit
+        kesilmis/curumus demektir ve turlar imzalanmamalidir. (Eski davranis:
+        kesik JSON -> {} -> [] -> TUM birikinti "islenmis" imzalanirdi = sessiz
+        toplu hafiza kaybi. Gecerli bos sonuc zaten {"ops":[]} olarak gelir.)"""
+        messages = [{"role": "system", "content": system},
                     {"role": "user", "content": user}]
         try:
             data = self.client.complete_json(messages, self._p_extract, OPS_SCHEMA)
-        except Exception:
-            return []
+        except LlamaError as e:
+            _log.warning("%s: llm_unavailable err=%s", what, err_brief(e))
+            raise LLMUnavailable(err_brief(e), status=getattr(e, "status", None)) from e
+        except Exception as e:
+            _log.warning("%s: beklenmedik istek hatasi err=%s", what, err_brief(e))
+            raise LLMUnavailable(err_brief(e)) from e
         ops = data.get("ops") if isinstance(data, dict) else None
         if not isinstance(ops, list):
-            return []
-        source_norm = _norm(new_turns)
-        valid_ids = {row[0] for row in ledger}
+            _log.warning("%s: cevap kesik/bicimsiz (ops yok) - turlar imzalanmayacak", what)
+            raise LLMUnavailable("bad_json: ops missing")
+        return ops
+
+    def extract_ops(self, ledger: list, new_turns: str) -> list[dict]:
+        """Return validated, evidence-checked ops. ledger = list[FactRow]
+        (isimli erisim: f.id/f.type/f.text/f.importance - tuple DEGIL)."""
+        ledger_txt = self._ledger_text(ledger) or "(empty)"
+        user = (f"CURRENT LEDGER:\n{ledger_txt}\n\nNEW MESSAGES:\n{new_turns}\n\n"
+                "Return the JSON ops.")
+        ops = self._ops_request(_EXTRACT_SYS, user, "extract_ops")
+        # rol onekleri kanit kaynagından cikarilir: her satirda gectiklerinden
+        # kanit ortusmesine bedava katki yapiyorlardi (quote-or-drop gevsemesi)
+        source_norm = _norm(re.sub(r"(?mi)^(user|assistant):\s*", "", new_turns))
+        valid_ids = {f.id for f in ledger}
         out: list[dict] = []
         for op in ops:
             if not isinstance(op, dict):
@@ -153,10 +203,14 @@ class Summarizer:
                     {"role": "user", "content": user}]
         try:
             return self.client.complete(messages, self._p_recap).strip()
-        except Exception:
+        except LlamaError as e:
+            _log.warning("update_recap: llm_unavailable err=%s", err_brief(e))
+            raise LLMUnavailable(err_brief(e), status=getattr(e, "status", None)) from e
+        except Exception as e:
+            _log.warning("update_recap: hata err=%s", err_brief(e))
             return ""
 
-    def reflect(self, ledger: list[tuple]) -> list[dict]:
+    def reflect(self, ledger: list) -> list[dict]:  # ledger = list[FactRow]
         """Periodic ledger cleanup: merge/dedup, resolve contradictions, add insights.
 
         Operates over the LEDGER (not raw turns), so ops here are NOT quote-checked:
@@ -165,19 +219,10 @@ class Summarizer:
         """
         if not ledger:
             return []
-        ledger_txt = "\n".join(f"[{fid}] ({typ}, imp {imp}) {text}"
-                               for (fid, typ, text, imp) in ledger)
-        user = (f"CURRENT LEDGER:\n{ledger_txt}\n\nClean it up and return the JSON ops.")
-        messages = [{"role": "system", "content": _REFLECT_SYS},
-                    {"role": "user", "content": user}]
-        try:
-            data = self.client.complete_json(messages, self._p_extract, OPS_SCHEMA)
-        except Exception:
-            return []
-        ops = data.get("ops") if isinstance(data, dict) else None
-        if not isinstance(ops, list):
-            return []
-        valid_ids = {row[0] for row in ledger}
+        user = (f"CURRENT LEDGER:\n{self._ledger_text(ledger)}\n\n"
+                "Clean it up and return the JSON ops.")
+        ops = self._ops_request(_REFLECT_SYS, user, "reflect")
+        valid_ids = {f.id for f in ledger}
         out: list[dict] = []
         for op in ops:
             if not isinstance(op, dict):

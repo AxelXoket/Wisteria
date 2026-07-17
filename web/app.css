@@ -103,12 +103,12 @@ body{font-family:var(--font-ui);color:var(--ink);
 .name-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .msg.ai .name{color:var(--accent);font-weight:650;font-size:12.5px;letter-spacing:.2px;display:block}
 /* per-message speak button (appears on hover in the name row) */
-.spk{width:22px;height:22px;border:none;border-radius:4px;background:transparent;cursor:pointer;
+.spk,.cpy{width:22px;height:22px;border:none;border-radius:4px;background:transparent;cursor:pointer;
   color:var(--ink-soft);display:grid;place-items:center;opacity:0;transition:opacity .15s,color .15s;padding:0}
-.msg.ai:hover .spk{opacity:.55}
-.spk:hover{opacity:1 !important;color:var(--accent)}
-.spk.playing{opacity:1 !important;color:var(--accent);filter:drop-shadow(0 0 3px rgba(var(--neon),0.5))}
-.spk svg{width:14px;height:14px;display:block}
+.msg.ai:hover .spk,.msg.ai:hover .cpy{opacity:.55}
+.spk:hover,.cpy:hover{opacity:1 !important;color:var(--accent)}
+.spk.playing,.cpy.playing{opacity:1 !important;color:var(--accent);filter:drop-shadow(0 0 3px rgba(var(--neon),0.5))}
+.spk svg,.cpy svg{width:14px;height:14px;display:block}
 .narration{color:var(--narration);font-family:var(--font-narr);font-style:italic;font-size:.97em} /* mesaj puntosuyla orantili (15/15.5) */
 .source{margin-top:9px;font-size:12px;color:var(--accent);display:inline-flex;align-items:center;gap:6px;
   background:rgba(109,77,122,0.14);padding:3px 9px;border-radius:8px;text-shadow:none;margin-right:6px}
@@ -141,7 +141,7 @@ body{font-family:var(--font-ui);color:var(--ink);
 .messages.bg-light-text .msg.ai .name{color:#cda6e6}
 .messages.bg-light-text .note{color:#cfc7da}
 .messages.bg-light-text .msg.user{background:rgba(28,22,36,0.44);border-color:rgba(255,255,255,0.14)}
-.messages.bg-light-text .spk{color:#cfc7da}
+.messages.bg-light-text .spk,.messages.bg-light-text .cpy{color:#cfc7da}
 .messages.bg-light-text .source{text-shadow:none}
 
 .typing{align-self:flex-start;display:flex;gap:5px;padding:6px 2px}
@@ -197,6 +197,12 @@ body{font-family:var(--font-ui);color:var(--ink);
 @keyframes spin{to{transform:rotate(360deg)}}
 .overlay .t{font-size:15px;color:var(--ink)}
 .overlay .d{font-size:12.5px;color:var(--ink-soft);max-width:420px}
+/* hata durumunda tek cikis uygulamayi kapatmak olmasin: yeniden dene (lock-btn dili) */
+.overlay .retry{margin-top:10px;border:none;border-radius:3px;padding:9px 22px;cursor:pointer;
+  font-size:13.5px;font-weight:600;background:var(--accent-deep);color:#fff;
+  transition:background .15s ease,transform .06s ease}
+.overlay .retry:hover{background:var(--accent)}
+.overlay .retry:active{transform:translateY(1px)}
 
 /* =========================================================================
    KILIT EKRANI (parola)  -  temaya birebir: cam kart, arka plan blur,
@@ -446,6 +452,15 @@ body{font-family:var(--font-ui);color:var(--ink);
 .vrange:focus::-webkit-slider-thumb{box-shadow:0 1px 3px rgba(60,44,78,0.30),0 0 0 3px rgba(109,77,122,0.20)}
 .vfoot{display:flex;align-items:center;gap:8px;margin-top:16px}
 .vnote{margin-right:auto;font-size:11.5px;color:var(--narration);font-style:italic}
+
+/* ---- Uretim ayarlari: algilanan model bilgisi satirlari ---- */
+.ginfo{margin-bottom:6px}
+.grow{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:6px 2px;font-size:13px;border-bottom:1px dashed rgba(90,74,104,0.12)}
+.grow:last-child{border-bottom:none}
+.grow .gl{color:var(--ink-soft)}
+.grow .gv{color:var(--ink);font-weight:600;text-align:right;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;max-width:60%}
 
 /* ---- Sohbet arka plani paneli: secim + sabit oranli pan/zoom kirpici ---- */
 .bg-actions{display:flex;gap:8px;margin-bottom:10px}

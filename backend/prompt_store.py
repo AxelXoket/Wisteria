@@ -26,6 +26,10 @@ import threading
 import time
 from pathlib import Path
 
+from .logutil import err_brief, log_for
+
+_log = log_for("prompts")
+
 # Kinds shown in the UI; *_bak kinds exist in the table but stay hidden.
 KINDS = ("system", "character", "persona")
 
@@ -33,17 +37,21 @@ KINDS = ("system", "character", "persona")
 ACTIVE_META = {"character": "active_character", "persona": "active_persona"}
 
 
-def _read_file(path: Path) -> str:
-    """BOM-tolerant read (mirrors prompts._read); never raises."""
+def _read_file(path: Path) -> str | None:
+    """BOM-tolerant read; never raises.
+
+    HATA -> None ("" DEGIL, denetim Y2): "" gecerli bir bos dosyadir; None ise
+    "okuyamadim" demektir. Eski davranis okuma hatasini "" sanip bos icerigi
+    dogrulayarak kaynak dosyayi siliyordu - prompt metni kalici kayboluyordu."""
     try:
         return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         try:
             return path.read_text(encoding="utf-8", errors="replace")
         except Exception:
-            return ""
+            return None
     except Exception:
-        return ""
+        return None
 
 
 class StorePromptProvider:
@@ -129,28 +137,61 @@ def _collect_sources(system_file: Path, characters_dir: Path, personas_dir: Path
 
 
 def _import_and_delete(store, lock, sources) -> tuple[int, int]:
-    """Write+verify all sources in ONE transaction, then (and only then) delete them.
+    """Read -> (no-clobber sinifla) -> write+verify tek transaction'da -> ancak
+    ondan sonra sil. Returns (imported, deleted).
 
-    Returns (imported, deleted). Raises on verification failure - the caller
-    treats that as "leave everything on disk, retry next unlock".
+    Denetim Y2/Y3 kurallari:
+      * Okunamayan dosya (None) ice alinmaz ve SILINMEZ - sonraki unlock dener.
+      * Kasada ayni (kind,name) VARSA dosya kasayi ASLA ezmez: icerik birebir
+        ayniysa dosya tuketilir (guvenli), farkliysa dosya BIRAKILIR + log.
+        (Eski davranis: silinememis bir artik dosya, her aciliste kullanicinin
+        uygulama ici duzenlemelerini sessizce eski haline dorduruyordu.)
+      * Silme yalnizca commit SONRASI.
     """
-    entries = [(kind, name, _read_file(path), path) for (kind, name, path) in sources]
+    entries = []
+    unreadable = 0
+    for kind, name, path in sources:
+        text = _read_file(path)
+        if text is None:
+            unreadable += 1
+            continue
+        entries.append((kind, name, text, path))
+    if unreadable:
+        _log.warning("prompt ice alma: %d dosya okunamadi, dokunulmadi", unreadable)
+
+    to_write: list[tuple[str, str, str, Path]] = []
+    to_delete: list[Path] = []
+    conflicts = 0
     with lock:
-        with store.con:  # one transaction: all rows + verification, or nothing
-            now = int(time.time())
-            for kind, name, text, _path in entries:
-                store.set_prompt(kind, name, text, now)
-            for kind, name, text, _path in entries:  # read-back byte-compare
-                if store.get_prompt(kind, name) != text:
-                    raise RuntimeError(f"verify failed for {kind}/{name}")
+        for kind, name, text, path in entries:
+            existing = store.get_prompt(kind, name)
+            if existing is None:
+                to_write.append((kind, name, text, path))
+            elif existing == text:
+                to_delete.append(path)  # birebir kopya: tuketmek kayipsiz
+            else:
+                conflicts += 1  # kasadaki guncel metin kazanir, dosya kalir
+        if conflicts:
+            _log.warning("prompt ice alma: %d dosya kasadaki kayitla catisiyor, birakildi", conflicts)
+        if to_write:
+            with store.con:  # one transaction: all rows + verification, or nothing
+                now = int(time.time())
+                for kind, name, text, _path in to_write:
+                    store.set_prompt(kind, name, text, now)
+                for kind, name, text, _path in to_write:  # read-back byte-compare
+                    if store.get_prompt(kind, name) != text:
+                        raise RuntimeError(f"verify failed for {kind}/{name}")
+    to_delete += [path for (_k, _n, _t, path) in to_write]  # strictly after commit
     deleted = 0
-    for _kind, _name, _text, path in entries:  # strictly after commit
+    for path in to_delete:
         try:
             path.unlink()
             deleted += 1
-        except OSError:
-            pass  # locked file -> retried by _cleanup_leftovers on next unlock
-    return len(entries), deleted
+        except OSError as e:
+            # kilitli dosya: sonraki unlock dener; no-clobber sayesinde tekrar
+            # denemesi kasadaki kaydi artik EZEMEZ
+            _log.warning("prompt kaynagi silinemedi err=%s", err_brief(e))
+    return len(to_write), deleted
 
 
 def _remove_empty_dirs(*dirs: Path) -> None:
@@ -192,8 +233,9 @@ def migrate_prompts_if_needed(store, lock: threading.RLock, *, system_file: Path
             store.set_meta("prompts_migrated", "1")
         _remove_empty_dirs(system_file.parent, characters_dir, personas_dir)
         result.update({"migrated": True, "imported": imported, "deleted": deleted})
-    except Exception:
-        pass  # plaintext untouched (or partially deleted post-commit); retried next unlock
+    except Exception as e:
+        # plaintext untouched (or partially deleted post-commit); retried next unlock
+        _log.error("prompt migrasyonu hata err=%s", err_brief(e))
     return result
 
 
@@ -208,6 +250,6 @@ def _cleanup_leftovers(store, lock: threading.RLock, *, system_file: Path,
         imported, deleted = _import_and_delete(store, lock, sources)
         _remove_empty_dirs(system_file.parent, characters_dir, personas_dir)
         result.update({"imported": imported, "deleted": deleted})
-    except Exception:
-        pass
+    except Exception as e:
+        _log.error("prompt artik-toplama hata err=%s", err_brief(e))
     return result

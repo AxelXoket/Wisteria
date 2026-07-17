@@ -293,9 +293,24 @@ class Worker:
             if self.stream is None:
                 try:
                     self._open_stream()
-                except Exception as exc:
-                    _emit("error", detail=f"ses cihazi acilamadi: {exc}", seq=seq)
-                    return
+                except Exception:
+                    # cihaz degismis olabilir: PortAudio'nun cihaz listesi
+                    # Pa_Initialize'da DONAR - terminate+initialize listeyi
+                    # tazeler, bir kez daha dene. KRITIK: _open_stream yari
+                    # yolda kalmis olabilir (nesne kuruldu, start() patladi) -
+                    # canli stream dururken terminate cagirmak "tum streamler
+                    # kapali" onkosulunu cigner (dogrulama turu bulgusu); once
+                    # kismi acilisi SIFIRLA
+                    self._close_stream()
+                    try:
+                        import sounddevice as sd
+                        sd._terminate()
+                        sd._initialize()
+                        self._open_stream()
+                    except Exception as exc:
+                        self._close_stream()  # ikinci yarim acilis da kalmasin
+                        _emit("error", detail=f"ses cihazi acilamadi: {exc}", seq=seq)
+                        return
             if not played_any:
                 _emit("speaking", seq=seq)
                 played_any = True
@@ -310,6 +325,13 @@ class Worker:
                     try:
                         self.audio_q.put(piece[i:i + block], timeout=2.0)
                     except queue.Full:
+                        # callback tuketmiyor = akis OLU (cihaz koptu/abort kaldi).
+                        # Eski davranis sessiz donmekti: 'done' hic gelmez, gosterge
+                        # takilir ve akis bir daha acilamazdi (oturum boyu sessizlik).
+                        # Kapat + None: bir SONRAKI konusma taze akis acar.
+                        self._close_stream()
+                        _drain(self.audio_q)
+                        _emit("error", detail="ses akisi tikandi, kapatildi (sonraki konusmada yeniden denenir)", seq=seq)
                         return
 
         if save and collected:
@@ -334,6 +356,21 @@ class Worker:
                 _emit("error", detail="synth loop: " + traceback.format_exc().splitlines()[-1])
 
     # ------------------------------------------------------------------- control
+
+    def _close_stream(self) -> None:
+        """Akisi guvenle kapat + None'la (yarim acilislar dahil) - sonraki
+        konusma taze acilis dener, terminate onkosulu her zaman saglanir."""
+        with self.play_lock:
+            if self.stream is not None:
+                try:
+                    self.stream.abort()
+                except Exception:
+                    pass
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
 
     def stop(self) -> None:
         """Barge-in: invalidate in-flight work, drop queues, abort playback. < ~100 ms."""

@@ -82,13 +82,21 @@ def _ensure_js_bridge(window) -> None:
             pass
 
 
+# Mutex tutamaci SUREC OMRU boyunca referansli kalmak ZORUNDA: pywin32 PyHANDLE
+# nesnesi referanssiz kalinca CloseHandle cagirir ve (tek tutamac oldugundan)
+# adlandirilmis mutex YOK OLUR - tek-ornek korumasi mikrosaniyeler icinde
+# bosa duserdi (denetim K3). GetLastError da tutamac hayattayken okunmali.
+_MUTEX = None
+
+
 def _single_instance() -> bool:
     """Return True if we are the only instance (else False -> caller should exit)."""
+    global _MUTEX
     try:
         import win32api
         import win32event
         import winerror
-        win32event.CreateMutex(None, False, "Global\\WisteriaApp_singleton")
+        _MUTEX = win32event.CreateMutex(None, False, "Global\\WisteriaApp_singleton")
         return win32api.GetLastError() != winerror.ERROR_ALREADY_EXISTS
     except Exception:
         return True  # if pywin32 missing, don't block
@@ -110,6 +118,8 @@ def _boot(window, api: JsApi, server: ServerManager) -> None:
     build. UI first, heavy I/O second.
     """
     spawned, msg = server.ensure()
+    if msg == "closing":  # pencere kapaniyor: sessizce cekil
+        return
     if msg.startswith("missing:") or msg.startswith("spawn_failed"):
         api.mark_error(msg)
         return
@@ -143,12 +153,19 @@ def main() -> None:
     except Exception:
         settings = {}
 
+    def _dim(key: str, default: int) -> int:
+        # bozuk settings degeri pencereli exe'yi acilista sessizce olduremez
+        try:
+            return int(settings.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
     window = webview.create_window(
         "Wisteria",
         url=str(CONFIG.web_dir / "index.html"),
         js_api=api,
-        width=int(settings.get("w", 1120)),
-        height=int(settings.get("h", 820)),
+        width=_dim("w", 1120),
+        height=_dim("h", 820),
         min_size=(760, 560),
         background_color="#ECE8E1",
     )
@@ -157,6 +174,8 @@ def main() -> None:
     import threading
 
     _boot_once = threading.Event()
+    _boot_gate = threading.Lock()  # is_set/set atomik degil: timer + loaded ayni anda gecebiliyordu
+    api.set_boot_hook(lambda: _boot(window, api, server))  # hata ekranindaki "Yeniden dene"
 
     def _kick_boot(*_a) -> None:
         """Backend'i (llama-server + TTS) ancak WebView ayaga kalktiktan sonra baslat.
@@ -166,9 +185,10 @@ def main() -> None:
         WebView2 baslatmasini acliktan bogup UI thread'ini donduruyordu. 'loaded'
         tetiklemesi sirayi garantiler: once arayuz, sonra agir I/O.
         """
-        if _boot_once.is_set():
-            return
-        _boot_once.set()
+        with _boot_gate:  # 10sn fallback timer'i ile 'loaded' cift boot edemez
+            if _boot_once.is_set():
+                return
+            _boot_once.set()
         threading.Thread(target=_boot, args=(window, api, server), daemon=True).start()
         threading.Thread(target=_ensure_js_bridge, args=(window,), daemon=True).start()
 
@@ -190,7 +210,9 @@ def main() -> None:
         except Exception:
             pass
         try:
-            server.stop()
+            # shutdown = stop + kalici _closing bayragi: kapanisla yarisan bir
+            # ctx-restart thread'i artik kapanis SIRASINDA yeni sunucu ACAMAZ
+            server.shutdown()
         except Exception:
             pass
 

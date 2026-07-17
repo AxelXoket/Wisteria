@@ -58,6 +58,16 @@ encrypted like everything else.
   focal-point crop that stays anchored when the window is resized, automatic
   light/dark text switching with adjustable contrast and tint, and message
   font size / line-height controls.
+- **Generation controls** - the loaded model's real identity and limits are
+  measured from the server (params, size, trained context, vision); sampling
+  (temperature / top-p / top-k / min-p / repeat penalty / max tokens) applies
+  live, and the context-window size restarts the sidecar safely with an
+  automatic revert if the new size does not fit in VRAM.
+- **Fails loudly, never silently** - structured local logging (content-free
+  by policy), a circuit breaker with backoff on the memory pipeline,
+  crash-safe vault recovery (the DB itself is the source of truth for the
+  key), atomic settings writes with corrupt-file backup, and a 13-suite
+  regression harness (`python tests/run_all.py`).
 
 ## Architecture
 
@@ -170,14 +180,17 @@ the speaker toggle never unloads the worker, so re-enabling is instant.
 wisteria-app/
 ├── main.py                 # window, DPI, single-instance, serial boot
 ├── backend/
-│   ├── api.py              # JsApi bridge: chat, vault, prompts, memory, voice
+│   ├── api.py              # JsApi core (bridge lifecycle, status, streaming glue)
+│   ├── api_parts/          # feature mixins: chat, memory, prompts, tts, prefs, gen
 │   ├── server.py           # llama-server lifecycle (job object, health)
 │   ├── tts.py / tts_worker.py       # thin client ↔ resident Chatterbox subprocess
 │   ├── prompts.py / prompt_store.py # encrypted prompt provider + migration
 │   ├── memory/             # crypto (scrypt/DPAPI), store, embedder, manager
+│   ├── logutil.py          # local rotating log (content-free by policy)
 │   └── vision.py / research.py / images.py / sanitize.py / llm.py
 ├── web/                    # index.html · app.css · app.js (no frameworks)
 ├── assets/                 # icon, brand sheet, version resource
+├── tests/                  # headless suites (run: python tests/run_all.py)
 ├── install-tts.bat / run-app.bat / build-exe.bat
 └── pyproject.toml
 ```
@@ -199,6 +212,9 @@ settings and voice environment as dev - one identity, two entry points.
 - ✅ Vision, offline research, packaged build
 - ✅ Custom chat backgrounds (focal-point crop, adaptive text contrast)
 - ✅ Live memory panel with search, manual facts and in-place editing
+- ✅ Generation settings panel (sampling + context size, server-measured limits)
+- ✅ Reliability overhaul: vault self-recovery, atomic settings, bounded
+  retries everywhere, full regression test suite
 - ⏳ Persistent chat history (encrypted, browsable sessions)
 - ⏳ Voice input (local Whisper STT)
 - ⏳ Brand dark theme for the UI

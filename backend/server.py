@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import socket
 import subprocess
+import threading
 import time
 from typing import Callable
 
 import httpx
 
 from .config import CONFIG
+from .logutil import err_brief, log_for
+
+_log = log_for("server")
 
 try:  # Windows job-object + process handles
     import win32api  # type: ignore
@@ -50,10 +54,20 @@ class ServerManager:
         self.proc: subprocess.Popen | None = None
         self._job = None
         self._owned = False
+        # ensure/stop/shutdown serilestirilir; _closing kapanistan sonra yeni
+        # spawn'i KALICI engeller (kapanisla yarisan ctx-restart, kapanis
+        # sirasinda 7GB'lik taze model yuklemesi baslatabiliyordu - denetim O5).
+        self._lock = threading.Lock()
+        self._closing = False
 
     @property
     def base_url(self) -> str:
         return CONFIG.api_base(self.port or DEFAULT_PORT)
+
+    @property
+    def owned(self) -> bool:
+        """Sunucuyu biz mi calistiriyoruz (False = disaridaki sunucu reuse)."""
+        return self._owned
 
     def _spawn_args(self, port: int) -> list[str]:
         return [
@@ -90,14 +104,29 @@ class ServerManager:
             h = win32api.OpenProcess(win32con.PROCESS_SET_QUOTA | win32con.PROCESS_TERMINATE, False, self.proc.pid)
             win32job.AssignProcessToJobObject(job, h)
             self._job = job  # keep alive for the app's lifetime
-        except Exception:
+        except Exception as e:
+            # yetim korumasi devre disi kaldiginda artik SESSIZ degil: cokme
+            # sonrasi VRAM tutan hayalet surecin tek izi bu satir olur
+            _log.warning("job object atanamadi (yetim korumasi yok) err=%s", err_brief(e))
             self._job = None
 
     def ensure(self) -> tuple[bool, str]:
         """Reuse a running server or spawn one. Returns (spawned_new, message)."""
+        with self._lock:
+            if self._closing:
+                return (False, "closing")
+            return self._ensure_locked()
+
+    def _ensure_locked(self) -> tuple[bool, str]:
+        # 0) zaten bizim canli surecimiz varsa yenisini acma (cift-boot kemeri)
+        if self._owned and self.proc is not None and self.proc.poll() is None:
+            return (False, "already_running")
+
         # 1) reuse an already-running server on the default port
         if _healthy(CONFIG.api_base(DEFAULT_PORT)):
             self.port = DEFAULT_PORT
+            self.proc = None   # bayat sahiplenilmis proc kalmasin: wait_ready'nin
+            self._job = None   # poll fast-fail'i sagligi olu surece bakip yaniltiyordu
             self._owned = False
             return (False, "reused")
 
@@ -107,28 +136,36 @@ class ServerManager:
         if not CONFIG.model_path.exists():
             return (False, f"missing:model ({CONFIG.model_path})")
 
-        # 3) spawn our own on a free port
-        self.port = _free_port()
-        try:
-            self.proc = subprocess.Popen(
-                self._spawn_args(self.port),
-                cwd=str(CONFIG.root),
-                creationflags=_CREATE_NO_WINDOW,
-                # ALL three stdio handles must be redirected: in a --windowed frozen
-                # app there is no console, and an unredirected stdin makes Popen die
-                # with "OSError: [WinError 6] handle is invalid" (PyInstaller recipe).
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        except Exception as exc:
-            return (False, f"spawn_failed:{type(exc).__name__}")
-        self._owned = True
-        self._make_job()
-        return (True, "spawned")
+        # 3) spawn our own on a free port; port araligi calinirsa (TOCTOU)
+        #    BIR kez taze portla yeniden dene
+        last_err = "spawn_failed:early_exit"
+        for attempt in (1, 2):
+            self.port = _free_port()
+            try:
+                self.proc = subprocess.Popen(
+                    self._spawn_args(self.port),
+                    cwd=str(CONFIG.root),
+                    creationflags=_CREATE_NO_WINDOW,
+                    # ALL three stdio handles must be redirected: in a --windowed frozen
+                    # app there is no console, and an unredirected stdin makes Popen die
+                    # with "OSError: [WinError 6] handle is invalid" (PyInstaller recipe).
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception as exc:
+                return (False, f"spawn_failed:{type(exc).__name__}")
+            self._owned = True
+            self._make_job()
+            time.sleep(0.8)  # bind hatasi ilk yuz ms'de olur; erken olumu yakala
+            if self.proc.poll() is None:
+                return (True, "spawned")
+            _log.warning("llama-server hemen sonlandi (port=%d deneme=%d)", self.port, attempt)
+        return (False, last_err)
 
     def wait_ready(self, timeout: int = 180, on_progress: Callable[[int], None] | None = None) -> bool:
         start = time.monotonic()
         while time.monotonic() - start < timeout:
-            if self.proc is not None and self.proc.poll() is not None:
+            proc = self.proc  # es zamanli stop() None'a cevirebilir - yerel kopya
+            if proc is not None and proc.poll() is not None:
                 return False  # process died during load
             if _healthy(self.base_url):
                 return True
@@ -138,19 +175,32 @@ class ServerManager:
         return _healthy(self.base_url)
 
     def stop(self) -> None:
+        with self._lock:
+            self._stop_locked()
+
+    def shutdown(self) -> None:
+        """Kapanis yolu: durdur VE yeni spawn'lari kalici engelle."""
+        with self._lock:
+            self._closing = True
+            self._stop_locked()
+
+    def _stop_locked(self) -> None:
+        proc = self.proc
+        self.proc = None   # bayat referans hicbir karari yaniltmasin
+        self._job = None
         if not self._owned:
             return
+        self._owned = False
+        if proc is None:
+            return
         try:
-            if self.proc is not None:
-                self.proc.terminate()
+            proc.terminate()
         except Exception:
             pass
         # Job object closing (on GC/exit) kills the tree; also try taskkill as a fallback.
         try:
-            if self.proc is not None:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(self.proc.pid)],
-                               creationflags=_CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           creationflags=_CREATE_NO_WINDOW, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
         except Exception:
             pass
-        self._job = None
